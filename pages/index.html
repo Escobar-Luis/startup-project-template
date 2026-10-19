@@ -62,7 +62,7 @@
   }
 
   const links = $("links");
-  for (const [href, label] of [["explainer.html", "How it works"], ["how-it-works.mp4", "30-second video"]]) {
+  for (const [href, label] of [["explainer.html", "How this works"], ["how-it-works.mp4", "30-second video"]]) {
     const head = await fetch(href, { method: "HEAD" }).catch(() => null);
     if (head && head.ok) { const a = document.createElement("a"); a.href = href; a.textContent = label; links.appendChild(a); }
   }

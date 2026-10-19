@@ -5,7 +5,7 @@
 // Defaults: public/explainer.json -> public/explainer.html (Vite copies public/ into dist/).
 // Exits 1 naming the problem: an edge or tour step naming an unknown node, a node with no files,
 // an empty tour, a file that does not exist, or a shell missing a slot.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 export const SHELL = ".claude/skills/project-explainer/explainer.template.html";
@@ -14,6 +14,19 @@ export const MERMAID_URL = "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/me
 export const SLOTS = ["TITLE", "SUMMARY", "ACCENT", "MERMAID_URL", "MERMAID", "PANELS", "TOUR", "DATA"];
 
 const ID = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+export const NODES_MIN = 3;
+export const NODES_MAX = 12;
+export const TOUR_MAX = 12;
+const TITLE_WORDS = 8;
+
+/** True when `path` is a regular file (a directory does not count). */
+export const isFile = (path) => {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+};
 const isText = (v) => typeof v === "string" && v.trim() !== "";
 
 /**
@@ -30,6 +43,7 @@ export function explainerProblems(data, exists = (path) => Boolean(path)) {
 
   const nodes = Array.isArray(data.nodes) ? data.nodes : [];
   if (!Array.isArray(data.nodes) || nodes.length === 0) p.push("nodes must be a non-empty list");
+  else if (nodes.length < NODES_MIN || nodes.length > NODES_MAX) p.push(`nodes: ${nodes.length}, need ${NODES_MIN} to ${NODES_MAX}`);
   const ids = new Set();
   nodes.forEach((n, i) => {
     const at = `nodes[${i}]`;
@@ -44,7 +58,7 @@ export function explainerProblems(data, exists = (path) => Boolean(path)) {
       return;
     }
     for (const f of n.files) {
-      if (typeof f !== "string" || !f || f.startsWith("/") || f.includes("..") || f.includes("://") || f.includes("\\")) {
+      if (typeof f !== "string" || !f || f.startsWith("/") || f.split("/").includes("..") || f.includes("://") || f.includes("\\")) {
         p.push(`node ${name}: file ${JSON.stringify(f)} must be a repo-relative path`);
       } else if (!exists(f)) p.push(`node ${name}: file ${f} does not exist`);
     }
@@ -61,6 +75,7 @@ export function explainerProblems(data, exists = (path) => Boolean(path)) {
   });
 
   if (!Array.isArray(data.tour) || data.tour.length === 0) p.push("tour is empty: list the stops in talk-track order");
+  else if (data.tour.length > TOUR_MAX) p.push(`tour has ${data.tour.length} stops, at most ${TOUR_MAX}`);
   (Array.isArray(data.tour) ? data.tour : []).forEach((s, i) => {
     if (!s || typeof s.node !== "string") return p.push(`tour[${i}].node is required`);
     if (!ids.has(s.node)) p.push(`tour[${i}] names unknown node: ${s.node}`);
@@ -68,6 +83,14 @@ export function explainerProblems(data, exists = (path) => Boolean(path)) {
     if (!isText(s.say)) p.push(`tour[${i}].say is required (the talk-track line)`);
   });
   return p;
+}
+
+/** Non-fatal advice: tour titles become ~6-word clip captions. */
+export function explainerWarnings(data) {
+  return (Array.isArray(data?.tour) ? data.tour : [])
+    .map((s, i) => [i, typeof s?.title === "string" ? s.title.trim().split(/\s+/).length : 0])
+    .filter(([, n]) => n > TITLE_WORDS)
+    .map(([i, n]) => `tour[${i}].title has ${n} words; keep it to ${TITLE_WORDS} or fewer`);
 }
 
 export function escapeHtml(s) {
@@ -93,7 +116,7 @@ export function mermaidSource(data) {
 /** A GitHub URL for a repo-relative path, or null when project.json has no GitHub repo. */
 export function fileUrl(repo, path) {
   if (typeof repo !== "string" || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/.test(repo)) return null;
-  return `${repo.replace(/\/$/, "")}/blob/HEAD/${path.split("/").map(encodeURIComponent).join("/")}`;
+  return `${repo.replace(/\/$/, "").replace(/\.git$/, "")}/blob/HEAD/${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 function panelHtml(n, stops, repo) {
@@ -131,7 +154,8 @@ export function renderExplainer(data, shell, project = {}) {
     .join("\n");
   const nodeKeys = Object.fromEntries(data.nodes.map((n, i) => [`n${i}`, n.id]));
   // JSON inside <script>: escape "<" so no string in the data can close the script element.
-  const json = JSON.stringify({ nodes: nodeKeys, tour: data.tour.map((s) => s.node) }).replace(/</g, "\\u003c");
+  const labels = Object.fromEntries(data.nodes.map((n) => [n.id, n.label]));
+  const json = JSON.stringify({ nodes: nodeKeys, labels, tour: data.tour.map((s) => s.node) }).replace(/</g, "\\u003c");
   const accent = /^#[0-9a-f]{6}$/i.test(project?.colors?.primary ?? "") ? project.colors.primary : "#1d4ed8";
   const fill = {
     TITLE: escapeHtml(data.title),
@@ -160,9 +184,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   } catch (e) {
     fail(`${src} is not valid JSON: ${e.message}`);
   }
-  const problems = explainerProblems(data, (f) => existsSync(f));
+  const problems = explainerProblems(data, isFile);
   if (problems.length) fail(`${src}:\n  ${problems.join("\n  ")}`);
-  const project = existsSync("project.json") ? JSON.parse(readFileSync("project.json", "utf8")) : {};
+  for (const w of explainerWarnings(data)) console.warn(`build-explainer: warning: ${w}`);
+  let project = {};
+  if (existsSync("project.json")) {
+    try {
+      project = JSON.parse(readFileSync("project.json", "utf8"));
+    } catch (e) {
+      fail(`project.json is not valid JSON: ${e.message}`);
+    }
+  }
   let html;
   try {
     html = renderExplainer(data, readFileSync(SHELL, "utf8"), project);

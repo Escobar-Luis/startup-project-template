@@ -53,7 +53,7 @@ describe("ship.yml (AD-5)", () => {
   it("publish job: protected paths, rebase, tests, gitleaks, then push", () => {
     expect(publish).toContain("needs: build");
     expect(publish).toContain("contents: write");
-    expect(yml).toContain('PROTECTED_PATHS: ".gitleaks.toml .gitleaksignore scripts/ .github/"');
+    expect(yml).toContain('PROTECTED_PATHS: ".gitleaks.toml .gitleaksignore scripts/ .github/ .claude/skills/project-explainer/ tests/explainer.test.ts"');
     inOrder(publish, ["git diff --name-only \"$START\" \"$AGENT\" -- $PROTECTED_PATHS", "git rebase origin/main", "npm test", "\"$GITLEAKS\" git", 'git push "https']);
   });
 
@@ -122,8 +122,28 @@ describe("explainer and clip in ship.yml (AD-13, story 3.8)", () => {
     expect(deploy).toContain("for f in public/explainer.html public/how-it-works.mp4");
   });
 
-  it("the publish gate's protected paths are unchanged", () => {
-    expect(yml).toContain('PROTECTED_PATHS: ".gitleaks.toml .gitleaksignore scripts/ .github/"');
+  it("an explainer failure keeps the build agent's work, and only the explainer's files survive it", () => {
+    const step = build.slice(build.indexOf("- name: Explainer agent"), build.indexOf("- name: Keep only the explainer's files"));
+    expect(step).toContain("continue-on-error: true");
+    const keep = build.slice(build.indexOf("- name: Keep only the explainer's files"), build.indexOf("- name: Record the explainer's tokens"));
+    expect(keep).toContain('git reset -q --soft "$PRE"');
+    expect(keep).toContain("git add -A -- public/explainer.json public/explainer.html review/");
+    expect(keep).toContain("git clean -fdq");
+    expect(build.indexOf("- name: Commit anything the agent left uncommitted")).toBeLessThan(build.indexOf("- name: Explainer agent"));
+    for (const name of ["Record the explainer's tokens", "Bundle the agent's commits", "Keep only the explainer's files"]) {
+      const at = build.indexOf(`- name: ${name}`);
+      expect(build.slice(at, build.indexOf("\n      - ", at + 1)), name).toMatch(/if: always\(\)/);
+    }
+    expect(build).toContain("set repo in project.json to https://github.com/{0}");
+  });
+
+  it("render-clip skips the template repo and a Project still holding the sample", () => {
+    expect(clip).toContain("if: github.event.repository.is_template != true");
+    expect(clip).toContain('skip "public/explainer.json is still the template\'s sample"');
+  });
+
+  it("the publish gate protects the explainer shell and its tests", () => {
+    expect(yml).toContain('PROTECTED_PATHS: ".gitleaks.toml .gitleaksignore scripts/ .github/ .claude/skills/project-explainer/ tests/explainer.test.ts"');
   });
 });
 

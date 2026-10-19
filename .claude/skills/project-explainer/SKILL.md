@@ -17,7 +17,7 @@ The same data also drives the ~30 s how-it-works clip, so every word must be tru
 1. **Read the facts first.** `README.md`, `project.json`, `docs/spec.md`, `docs/memlog.md`, then the code
    that makes each claim true: `src/worker/index.ts` (routes), `src/worker/llm.ts`, `db/*.sql`, `src/web/`,
    anything the build added. Never describe something the code doesn't do. Something not built yet is left out.
-2. **Pick 5 to 9 nodes**: the parts a listener needs, not every file. Usually the visitor's page, the API,
+2. **Pick 5 to 9 nodes** (the build allows 3 to 12): the parts a listener needs, not every file. Usually the visitor's page, the API,
    the model call, the database, the GitHub Pages front, plus what this Project added that matters most.
 3. **Write `public/explainer.json`** in the format below. Delete `"template_sample"` if it is still there
    (the deploy refuses the template's sample).
@@ -25,12 +25,14 @@ The same data also drives the ~30 s how-it-works clip, so every word must be tru
    request from the visitor through the system. Each stop's `title` is a plain caption of about 6 words with
    no jargon (it becomes the clip's caption); `say` is the one or two sentences he says there, where the
    engineering terms belong.
-5. **Set `repo` in `project.json`** to `https://github.com/<owner>/<repo>` (`$GITHUB_REPOSITORY` in Actions)
-   so file paths render as GitHub links.
+5. **Leave `project.json` alone.** The build agent sets its `repo` (`https://github.com/<owner>/<repo>`), which
+   turns file paths into GitHub links. In Actions only the two explainer files are kept from this skill's run.
 6. **Build and check**: `npm run build` runs `node scripts/build-explainer.mjs` first. It fails, naming the
    problem, on an edge or tour stop that names an unknown node, a node with no files, a file that does not
-   exist, or an empty tour. Fix the data until `npm test` and `npm run build` pass.
-7. **Commit** `public/explainer.json` and `public/explainer.html` together: `docs: architecture explainer (<startup id>)`.
+   exist, an empty tour, fewer than 3 or more than 12 nodes, or more than 12 tour stops; it warns on a tour title over
+   8 words. Fix only `public/explainer.json` until `npm run build` passes; change no other file.
+7. **Commit** (local sessions only; in Actions the workflow commits): `public/explainer.json` and
+   `public/explainer.html` together, as `docs: architecture explainer (<startup.domain from project.json>)`.
 
 ## Format
 

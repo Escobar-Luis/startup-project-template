@@ -8,7 +8,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "build": "tsc -p tsconfig.worker.json && tsc -p tsconfig.web.json && vite build && node scripts/check-bundle.mjs dist",
+    "build": "node scripts/build-explainer.mjs && tsc -p tsconfig.worker.json && tsc -p tsconfig.web.json && vite build && node scripts/check-bundle.mjs dist",
+    "explainer": "node scripts/build-explainer.mjs",
     "build:worker": "wrangler deploy --dry-run --outdir .wrangler/bundle",
     "deploy": "wrangler deploy",
     "stack:check": "python3 tools/stack_check.py --dry-run",

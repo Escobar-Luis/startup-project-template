@@ -3,7 +3,8 @@
 //   node scripts/check-review.mjs review/code-review.md <build sha>
 // Rules (AGENTS.md):
 //   1. The first line is "# Code review: <sha>". That sha must be the build sha, or an ancestor of it
-//      whose diff to the build sha touches only review/ (the review commit itself).
+//      whose diff to the build sha touches only review/ (the review commit itself) and the explainer the
+//      build job writes after the review (public/explainer.json and public/explainer.html, story 3.8).
 //   2. At least one checklist line ("- [ ]" / "- [x]", any list marker: - * + or 1.).
 //   3. No unchecked item that mentions high or critical, and no unchecked item under a High/Critical heading.
 // A missing file fails too: no review, no deploy.
@@ -43,7 +44,10 @@ export function reviewedSha(markdown) {
   return (markdown.split("\n")[0] ?? "").match(/^# Code review: ([0-9a-f]{7,40})/)?.[1];
 }
 
-/** True when `reviewed` is the build sha, or an ancestor whose changes up to it touch only review/. */
+// Written after the review by the build job's explainer step: documentation, not code.
+export const AFTER_REVIEW = ["public/explainer.json", "public/explainer.html"];
+
+/** True when `reviewed` is the build sha, or an ancestor whose changes up to it touch only review/ and the explainer. */
 export function coversBuild(reviewed, buildSha, git = (args) => execFileSync("git", args, { encoding: "utf8" })) {
   if (buildSha.startsWith(reviewed) || reviewed.startsWith(buildSha)) return true;
   try {
@@ -52,7 +56,7 @@ export function coversBuild(reviewed, buildSha, git = (args) => execFileSync("gi
     return false;
   }
   const changed = git(["diff", "--name-only", reviewed, buildSha]).split("\n").filter(Boolean);
-  return changed.every((f) => f.startsWith("review/"));
+  return changed.every((f) => f.startsWith("review/") || AFTER_REVIEW.includes(f));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

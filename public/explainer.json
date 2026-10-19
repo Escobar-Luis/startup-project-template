@@ -1,0 +1,76 @@
+{
+  "template_sample": true,
+  "title": "startup-project-template",
+  "summary": "A $0 full-stack demo: a React page and an API on one Cloudflare Worker, its own Neon database, free AI models with a recorded fallback, and a GitHub Pages link that outlives the Worker.",
+  "nodes": [
+    {
+      "id": "visitor",
+      "label": "Visitor's browser",
+      "does": "Loads the single-page app, sends a prompt to the API and shows the answer, or a recorded run when the live AI quota is used up.",
+      "files": ["src/web/App.tsx", "src/web/project.ts", "project.json"],
+      "why": "The page is static assets served by the Worker, so it costs no Worker CPU. The Startup name, colors and problem come from project.json, so a new Project changes data, not layout."
+    },
+    {
+      "id": "worker",
+      "label": "Worker API (Hono)",
+      "does": "Serves /api/ask and /health. It validates the prompt, keys the visitor by a peppered hash, and hands the call to llm().",
+      "files": ["src/worker/index.ts", "src/worker/ratelimit.ts", "wrangler.jsonc"],
+      "why": "One Worker holds every key and the database URL, so nothing secret ever reaches the browser. /health always answers 200 with {ok, db, sha} so the Pages front and the deploy smoke check can read why it is not ok."
+    },
+    {
+      "id": "llm",
+      "label": "llm(): free model chain",
+      "does": "Counts the call against a daily cap in Neon, then tries Workers AI, Groq and OpenRouter free tiers in order, and falls back to a recorded run with a banner.",
+      "files": ["src/worker/llm.ts"],
+      "why": "Every model call goes through one function, so the $0 rule holds in one place: no database or a full day fails closed to demo mode instead of spending."
+    },
+    {
+      "id": "db",
+      "label": "Neon Postgres",
+      "does": "Stores the daily call counter, the recorded demo runs and visitor submissions, one Neon project per Project.",
+      "files": ["src/worker/db.ts", "db/schema.ts", "db/init.sql", "db/rls.sql"],
+      "why": "Row-level security keys visitor rows on app.visitor, and the Worker connects as an app role that cannot bypass it. HTTP queries fit the Worker's short requests."
+    },
+    {
+      "id": "pages",
+      "label": "GitHub Pages front",
+      "does": "The link to share. It sends visitors to the live Worker when /health answers, and shows the recorded runs when it does not.",
+      "files": ["pages/index.html", "demo/runs.json"],
+      "why": "A free Worker or database can sleep or be retired; the Pages link and its recorded runs stay up, so an old link never shows an error."
+    },
+    {
+      "id": "ship",
+      "label": "ship.yml: build, publish, deploy",
+      "does": "Build runs the Claude Code agent with a read-only token. Publish, on a fresh runner, refuses protected-path changes, tests, builds and runs gitleaks before pushing. Deploy checks the review, placeholders, Pages and database size, then ships the Worker with its secrets and publishes Pages.",
+      "files": [".github/workflows/ship.yml", "scripts/check-review.mjs", "scripts/check-placeholders.mjs", "scripts/provision-neon.mjs"],
+      "why": "Heavy work runs in GitHub Actions, never on a laptop, and the agent that writes the code never holds a deploy secret or a push token."
+    },
+    {
+      "id": "explainer",
+      "label": "This explainer and the clip",
+      "does": "The project-explainer skill writes public/explainer.json; a script checks it and builds this page. A best-effort job turns the same facts into a short how-it-works video.",
+      "files": [".claude/skills/project-explainer/SKILL.md", "scripts/build-explainer.mjs", "scripts/build-clip.mjs"],
+      "why": "One fixed page format for every Project, readable from a file with no server, so each Project can be understood in about three minutes."
+    }
+  ],
+  "edges": [
+    { "from": "visitor", "to": "pages", "label": "opens the link" },
+    { "from": "pages", "to": "worker", "label": "live? go there" },
+    { "from": "visitor", "to": "worker", "label": "POST /api/ask" },
+    { "from": "worker", "to": "llm", "label": "llm(prompt)" },
+    { "from": "llm", "to": "db", "label": "daily count, recorded runs" },
+    { "from": "worker", "to": "db", "label": "submissions" },
+    { "from": "ship", "to": "worker", "label": "deploys" },
+    { "from": "ship", "to": "pages", "label": "publishes" },
+    { "from": "ship", "to": "explainer", "label": "builds" }
+  ],
+  "tour": [
+    { "node": "pages", "title": "Anyone opens one stable link.", "say": "Everything starts at the GitHub Pages link: it checks whether the live app is awake and sends the visitor there, or shows recorded runs." },
+    { "node": "visitor", "title": "The page asks a question.", "say": "The React page is static assets on the Worker, branded from project.json, and posts the visitor's prompt to the API." },
+    { "node": "worker", "title": "One Worker holds every key.", "say": "The Hono API validates the prompt and keys the visitor by a peppered hash; secrets and the database URL never leave the Worker." },
+    { "node": "llm", "title": "Free models, then a recorded run.", "say": "llm() counts the call against a daily cap, tries Workers AI, Groq and OpenRouter free tiers, and falls back to a recorded run with a banner, so it stays at zero dollars." },
+    { "node": "db", "title": "Its own database, locked per visitor.", "say": "Each Project gets its own Neon database; row-level security keeps each visitor's rows to themselves." },
+    { "node": "ship", "title": "The cloud builds and ships it.", "say": "ship.yml builds with an agent that cannot push, publishes only after tests and a secret scan, and deploys only after the review and size gates pass." },
+    { "node": "explainer", "title": "This page explains it all.", "say": "The same facts build this explainer and a short clip, so every Project can be read in about three minutes." }
+  ]
+}

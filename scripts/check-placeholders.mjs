@@ -9,6 +9,7 @@ export function placeholderProblems(read = (p) => readFileSync(p, "utf8")) {
   try {
     const project = JSON.parse(read("project.json"));
     if (project?.startup?.name === "Example Startup") problems.push('project.json still names "Example Startup"');
+    if (/\/startup-project-template\/?$/.test(project?.repo ?? "")) problems.push("project.json repo still points at the template");
   } catch (e) {
     problems.push(`project.json unreadable: ${e.message}`);
   }
@@ -25,6 +26,14 @@ export function placeholderProblems(read = (p) => readFileSync(p, "utf8")) {
     if (read("README.md").includes("Replace with")) problems.push('README.md still says "Replace with"');
   } catch (e) {
     problems.push(`README.md unreadable: ${e.message}`);
+  }
+  try {
+    const explainer = read("public/explainer.json");
+    if (explainer !== undefined && JSON.parse(explainer)?.template_sample === true) {
+      problems.push("public/explainer.json is still the template's sample; run the project-explainer skill");
+    }
+  } catch {
+    // Missing or invalid: scripts/build-explainer.mjs fails the build with the reason.
   }
   return problems;
 }

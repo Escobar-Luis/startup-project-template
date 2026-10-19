@@ -39,7 +39,12 @@ These rules bind every agent working in this repo.
 1. `project.json`: the Startup name and domain, a title, the problem in one sentence, colors (not the Startup's brand colors).
 2. `demo/runs.json`: 3-5 recorded runs (`input`, `output`, `model`, `recorded_at`). Each output must be a real model output, and `model` must name the model that produced it.
 3. `README.md`: the sections problem, evidence, what was built, how to run, stack_note.
-4. `public/explainer.html`: the architecture explainer (AD-13).
+4. `public/explainer.json`: the architecture explainer's data (AD-13), written by the `project-explainer` skill
+   (`.claude/skills/project-explainer/SKILL.md`). `npm run build` checks it and builds `public/explainer.html`.
+   Make the explainer last, after the code is done: in Actions, the build job's explainer step runs the skill after
+   you finish (it may change only the two explainer files after your review); in a local session, run the skill
+   yourself as the last step. The tour order is the talk-track order. Set `repo` in `project.json` to
+   `https://github.com/<owner>/<repo>` (`$GITHUB_REPOSITORY`) during your build so the explainer links files.
 5. `review/code-review.md`, written last, after your final code commit. The deploy job checks it:
    - the first line is `# Code review: <sha>`, the commit you reviewed; only `review/` may change after it;
    - at least one checklist line; write `- [x] none: no findings` if there are none;
@@ -53,7 +58,13 @@ These rules bind every agent working in this repo.
 - [ ] low: <finding>
 ```
 
-6. Placeholders: the deploy refuses while `project.json` names "Example Startup", `demo/runs.json` has fewer than 3 runs or a `template-placeholder` run, or the README still says "Replace with".
+6. Placeholders: the deploy refuses while `project.json` names "Example Startup" or the template repo, `demo/runs.json` has fewer than 3 runs or a `template-placeholder` run, `public/explainer.json` is still the template's sample, or the README still says "Replace with".
+
+## How-it-works clip
+
+After publish, the best-effort `render-clip` job turns `public/explainer.json` into a ~30 s captioned clip
+(`scripts/build-clip.mjs`, HyperFrames in a headless Chrome on the runner) and the deploy ships it as
+`how-it-works.mp4` when it rendered. A failed render never fails the deploy; the job summary says `clip: skipped (<reason>)` when it could not render.
 
 ## GitHub Pages
 

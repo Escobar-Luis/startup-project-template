@@ -4,6 +4,7 @@
     "domain": "example.com"
   },
   "title": "Example Project",
+  "repo": "https://github.com/Escobar-Luis/startup-project-template",
   "problem": "One sentence naming who hurts and what this Project shows about fixing it. The build agent replaces this.",
   "colors": {
     "primary": "#1d4ed8",

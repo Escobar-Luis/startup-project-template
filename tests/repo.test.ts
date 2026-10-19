@@ -11,7 +11,7 @@ describe("ship.yml (AD-5)", () => {
   const yml = read(".github/workflows/ship.yml");
   const job = (name: string, next?: string) => yml.slice(yml.indexOf(`\n  ${name}:`), next ? yml.indexOf(`\n  ${next}:`) : undefined);
   const build = job("build", "publish");
-  const publish = job("publish", "deploy");
+  const publish = job("publish", "render-clip");
   const deploy = job("deploy");
   const inOrder = (text: string, marks: string[]) => {
     const at = marks.map((m) => text.indexOf(m));
@@ -58,7 +58,8 @@ describe("ship.yml (AD-5)", () => {
   });
 
   it("deploy job: gates before any change, secrets in the same version as the deploy, db:true smoke check, Pages", () => {
-    expect(deploy).toContain("needs: publish");
+    expect(deploy).toContain("needs: [publish, render-clip]");
+    expect(deploy).toContain("needs.publish.result == 'success'");
     expect(deploy).toContain("environment: deploy");
     inOrder(deploy, [
       "scripts/check-review.mjs review/code-review.md",
@@ -77,6 +78,52 @@ describe("ship.yml (AD-5)", () => {
     expect(deploy).not.toContain("wrangler secret put");
     expect(deploy).not.toContain("|| true\n");
     expect(deploy).toContain('if [ -z "$LIVE_URL" ]; then echo "::error::wrangler reported no deployment URL"; exit 1; fi');
+  });
+});
+
+describe("explainer and clip in ship.yml (AD-13, story 3.8)", () => {
+  const yml = read(".github/workflows/ship.yml");
+  const job = (name: string, next?: string) => yml.slice(yml.indexOf(`\n  ${name}:`), next ? yml.indexOf(`\n  ${next}:`) : undefined);
+  const build = job("build", "publish");
+  const clip = job("render-clip", "deploy");
+  const deploy = job("deploy");
+
+  it("build runs the project-explainer skill after the build agent, then records its tokens", () => {
+    const agent = build.indexOf("- name: Build agent");
+    const explainer = build.indexOf("- name: Explainer agent (project-explainer skill)");
+    const usage = build.indexOf("scripts/explainer-usage.mjs");
+    const bundle = build.indexOf("- name: Bundle the agent's commits");
+    expect(agent).toBeGreaterThan(0);
+    expect(explainer).toBeGreaterThan(agent);
+    expect(usage).toBeGreaterThan(explainer);
+    expect(bundle).toBeGreaterThan(usage);
+    expect(build.slice(explainer, usage)).toContain(".claude/skills/project-explainer/SKILL.md");
+    expect(build.slice(explainer, usage)).toContain('--disallowedTools "Bash(git push:*)"');
+    expect(build).toContain("review/explainer-usage.json");
+  });
+
+  it("render-clip is best effort: after publish, continue-on-error, no secrets, skips with a reason", () => {
+    expect(clip).toContain("needs: publish");
+    expect(clip).toContain("continue-on-error: true");
+    expect(clip).not.toMatch(/secrets\.|environment:/);
+    expect(clip).toMatch(/HYPERFRAMES_VERSION: "\d+\.\d+\.\d+"/);
+    expect(clip).toContain('echo "clip: skipped ($1)" | tee -a "$GITHUB_STEP_SUMMARY"');
+    expect(clip).toContain("exit 0");
+    expect(clip).toContain("node scripts/build-clip.mjs");
+    expect(clip).toContain("--workers 1");
+  });
+
+  it("deploy never needs the clip, and ships it when it exists", () => {
+    expect(deploy).toContain("!cancelled() && needs.publish.result == 'success'");
+    expect(deploy).toContain("if: needs.render-clip.outputs.rendered == 'true'");
+    const take = deploy.indexOf("Take the how-it-works clip");
+    expect(take).toBeGreaterThan(0);
+    expect(take).toBeLessThan(deploy.indexOf("- run: npm run build"));
+    expect(deploy).toContain("for f in public/explainer.html public/how-it-works.mp4");
+  });
+
+  it("the publish gate's protected paths are unchanged", () => {
+    expect(yml).toContain('PROTECTED_PATHS: ".gitleaks.toml .gitleaksignore scripts/ .github/"');
   });
 });
 

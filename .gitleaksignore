@@ -1,0 +1,4 @@
+# Fake fixture URLs in the template's first commit (fixed in fix/gitleaks-test-fixtures). Projects made from the template do not carry this history.
+8bf5aa247d24d80d07d778d47e1bae5619f33170:tests/scripts.test.ts:postgres-url-with-password:46
+8bf5aa247d24d80d07d778d47e1bae5619f33170:tests/scripts.test.ts:postgres-url-with-password:61
+8bf5aa247d24d80d07d778d47e1bae5619f33170:tests/scripts.test.ts:postgres-url-with-password:62

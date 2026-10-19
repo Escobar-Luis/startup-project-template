@@ -40,7 +40,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.actor == github.repository_owner
     runs-on: ubuntu-latest
     environment: build
-    timeout-minutes: ${{ inputs.timeout_minutes || 60 }}
+    timeout-minutes: ${{ fromJSON(inputs.timeout_minutes || '60') }}
     permissions:
       contents: write
       issues: read

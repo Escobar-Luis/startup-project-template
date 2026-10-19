@@ -58,6 +58,7 @@ Cerebras (card), GitHub Models (retired 2026-07-30).
 | Groq free: 30/min, 1,000/day per model | next provider |
 | OpenRouter `:free`: 50/day | demo mode |
 | Neon Free: 100 projects, 1 GB each, 20 GB total | deploy fails over 200 MB per Project |
+| Neon Free: 100 compute-hours per project per month, scale to zero after 5 min idle | `/health` caches the database status 30 s per isolate, so polling it does not keep compute awake |
 | Langfuse Hobby: 50k units/month | sample Project traces first |
 | GitHub Actions and Pages | free for public repos |
 

@@ -9,6 +9,15 @@ const read = (p: string) => readFileSync(p, "utf8");
 
 describe("ship.yml (AD-5)", () => {
   const yml = read(".github/workflows/ship.yml");
+  const job = (name: string, next?: string) => yml.slice(yml.indexOf(`\n  ${name}:`), next ? yml.indexOf(`\n  ${next}:`) : undefined);
+  const build = job("build", "publish");
+  const publish = job("publish", "deploy");
+  const deploy = job("deploy");
+  const inOrder = (text: string, marks: string[]) => {
+    const at = marks.map((m) => text.indexOf(m));
+    expect(at.every((i) => i > 0), JSON.stringify(marks.filter((_, i) => at[i] <= 0))).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+  };
 
   it("triggers only on workflow_dispatch and pushes to main, never pull_request_target", () => {
     expect(yml).toMatch(/^on:\n  workflow_dispatch:/m);
@@ -18,44 +27,56 @@ describe("ship.yml (AD-5)", () => {
     expect(yml).toContain("github.actor == github.repository_owner");
   });
 
-  it("build job: env build, claude-code-action with OAuth token and max turns, timeout, gitleaks before push", () => {
-    const build = yml.slice(yml.indexOf("\n  build:"), yml.indexOf("\n  deploy:"));
+  it("build job: env build, read-only token, claude-code-action with OAuth token and max turns, no push", () => {
     expect(build).toContain("environment: build");
     expect(build).toContain("timeout-minutes: ${{ fromJSON(inputs.timeout_minutes || '60') }}");
+    expect(build).toMatch(/permissions:\n      contents: read/);
+    expect(build).not.toContain("contents: write");
     expect(build).toContain("uses: anthropics/claude-code-action@v1");
     expect(build).toContain("claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}");
     expect(build).toContain("--max-turns ${{ inputs.max_turns }}");
     expect(build).not.toMatch(/CLOUDFLARE|NEON_API_KEY|GROQ_API_KEY|OPENROUTER_API_KEY/);
-    expect(build.indexOf("gitleaks git")).toBeGreaterThan(0);
-    expect(build.indexOf("gitleaks git")).toBeLessThan(build.indexOf("git push \"https"));
+    expect(build).not.toContain('git push "https');
     expect(build).toContain("persist-credentials: false");
   });
 
-  it("no secrets: build fails first with a clear missing CLAUDE_CODE_OAUTH_TOKEN message", () => {
-    const build = yml.slice(yml.indexOf("\n  build:"), yml.indexOf("\n  deploy:"));
+  it("no secrets: build fails first with a clear missing CLAUDE_CODE_OAUTH_TOKEN message; non-main dispatch refused", () => {
     const steps = build.slice(build.indexOf("steps:"));
-    const first = steps.slice(0, steps.indexOf("- uses: actions/checkout"));
+    const first = steps.slice(0, steps.indexOf("- name: Refuse dispatch"));
     expect(first).toContain('if [ -z "$TOKEN" ]');
     expect(first).toContain("::error::missing CLAUDE_CODE_OAUTH_TOKEN");
     expect(first).toContain("exit 1");
+    expect(build).toContain("github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'");
+    inOrder(build, ["Refuse dispatch", "uses: actions/checkout", "anthropics/claude-code-action"]);
   });
 
-  it("deploy job: needs build, env deploy, review and size gates before wrangler, then Pages", () => {
-    const deploy = yml.slice(yml.indexOf("\n  deploy:"));
-    expect(deploy).toContain("needs: build");
+  it("publish job: protected paths, rebase, tests, gitleaks, then push", () => {
+    expect(publish).toContain("needs: build");
+    expect(publish).toContain("contents: write");
+    expect(yml).toContain('PROTECTED_PATHS: ".gitleaks.toml .gitleaksignore scripts/ .github/"');
+    inOrder(publish, ["git diff --name-only \"$START\" \"$AGENT\" -- $PROTECTED_PATHS", "git rebase origin/main", "npm test", "\"$GITLEAKS\" git", 'git push "https']);
+  });
+
+  it("deploy job: gates before any change, secrets in the same version as the deploy, db:true smoke check, Pages", () => {
+    expect(deploy).toContain("needs: publish");
     expect(deploy).toContain("environment: deploy");
-    const order = [
-      "scripts/check-review.mjs",
-      "scripts/provision-neon.mjs",
+    inOrder(deploy, [
+      "scripts/check-review.mjs review/code-review.md",
+      "scripts/check-placeholders.mjs",
+      "Pages not enabled: the build step (story 3.9) enables it with \\`gh api\\` from the Mac",
+      "provision-neon.mjs connect",
       "scripts/db-size.mjs",
-      "uses: cloudflare/wrangler-action@v4",
-      "wrangler secret put DATABASE_URL",
-      "deployed.json",
+      "provision-neon.mjs apply",
+      "\"$GITLEAKS\" dir --config .gitleaks.toml --redact --exit-code 1 dist",
+      "namespace_id",
+      "--secrets-file",
+      "jq -e '.db == true'",
       "git init -q -b gh-pages",
-    ].map((s) => deploy.indexOf(s));
-    expect(order.every((i) => i > 0)).toBe(true);
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    ]);
     expect(deploy).toContain('wranglerVersion: "4.151.2"');
+    expect(deploy).not.toContain("wrangler secret put");
+    expect(deploy).not.toContain("|| true\n");
+    expect(deploy).toContain('if [ -z "$LIVE_URL" ]; then echo "::error::wrangler reported no deployment URL"; exit 1; fi');
   });
 });
 
@@ -78,6 +99,12 @@ describe("database (AD-6)", () => {
     expect(rls).toContain("ALTER TABLE submissions FORCE ROW LEVEL SECURITY");
     expect(rls).toMatch(/CREATE POLICY submissions_select_own ON submissions FOR SELECT TO app\s+USING \(visitor = current_setting\('app.visitor', true\)\)/);
     expect(read("scripts/provision-neon.mjs")).toContain("NOBYPASSRLS");
+  });
+
+  it("tables the build agent adds are reachable by the app role", () => {
+    expect(rls).toContain("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE ON TABLES TO app");
+    expect(rls).toContain("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO app");
+    expect(read("AGENTS.md")).toContain("ENABLE` and `FORCE ROW LEVEL SECURITY");
   });
 });
 

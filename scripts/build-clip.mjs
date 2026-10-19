@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { escapeHtml, explainerProblems } from "./build-explainer.mjs";
+import { escapeHtml, explainerProblems, isFile } from "./build-explainer.mjs";
 
 const r2 = (n) => Math.round(n * 1000) / 1000;
 
@@ -132,7 +132,13 @@ export function renderClip(data, project = {}) {
   tweens.push(`tl.to("#intro", { opacity: 0, duration: 0.4, ease: "power2.in" }, ${r2(intro.dur - 0.4)});`);
   tweens.push(`tl.set("#world", { x: ${fit.cam.x}, y: ${fit.cam.y}, scale: ${fit.cam.scale} }, 0);`);
   tweens.push(`tl.fromTo("#world", { opacity: 0 }, { opacity: 1, duration: 0.4 }, ${r2(intro.dur - 0.2)});`);
-  data.tour.forEach((step, i) => tweens.push(`tl.fromTo("#${key.get(step.node)}", { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.35, ease: "back.out(1.6)" }, ${r2(INTRO + i * (OVERVIEW - 0.6) / data.tour.length)});`));
+  // Each node enters once, at its first tour stop, even when the tour visits it again.
+  const entered = new Set();
+  data.tour.forEach((step, i) => {
+    if (entered.has(step.node)) return;
+    entered.add(step.node);
+    tweens.push(`tl.fromTo("#${key.get(step.node)}", { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.35, ease: "back.out(1.6)" }, ${r2(INTRO + i * (OVERVIEW - 0.6) / data.tour.length)});`);
+  });
   for (const n of data.nodes) {
     if (!data.tour.some((s) => s.node === n.id)) tweens.push(`tl.fromTo("#${key.get(n.id)}", { opacity: 0 }, { opacity: 1, duration: 0.35 }, ${INTRO});`);
   }
@@ -208,6 +214,7 @@ export function renderClip(data, project = {}) {
     <script>
       const tl = gsap.timeline({ paused: true });
       ${tweens.join("\n      ")}
+      window.__timelines = window.__timelines || {};
       window.__timelines["main"] = tl;
     </script>
   </body>
@@ -222,7 +229,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(1);
   }
   const data = JSON.parse(readFileSync("public/explainer.json", "utf8"));
-  const problems = explainerProblems(data, (f) => existsSync(f));
+  const problems = explainerProblems(data, isFile);
   if (problems.length) {
     console.error(`build-clip: public/explainer.json:\n  ${problems.join("\n  ")}`);
     process.exit(1);

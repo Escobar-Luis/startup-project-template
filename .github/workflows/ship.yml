@@ -36,7 +36,7 @@ env:
   GITLEAKS_VERSION: 8.30.1
   NODE_VERSION: "24"
   # The build agent may not change these; publish fails if it does.
-  PROTECTED_PATHS: ".gitleaks.toml .gitleaksignore scripts/ .github/"
+  PROTECTED_PATHS: ".gitleaks.toml .gitleaksignore scripts/ .github/ .claude/skills/project-explainer/ tests/explainer.test.ts"
 
 jobs:
   build:
@@ -96,40 +96,13 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
-          prompt: ${{ inputs.prompt || 'Read AGENTS.md and follow it. Build this Project end to end, run npm test and npm run build until both pass, write review/code-review.md, and commit your work with conventional commit messages. Do not push.' }}
+          prompt: ${{ inputs.prompt || format('Read AGENTS.md and follow it. Build this Project end to end, set repo in project.json to https://github.com/{0}, run npm test and npm run build until both pass, write review/code-review.md, and commit your work with conventional commit messages. Do not push.', github.repository) }}
           claude_args: >-
             --max-turns ${{ inputs.max_turns }}
             --disallowedTools "Bash(git push:*)"
 
-      # AD-13: the explainer is made last, from the code as built, by our project-explainer skill. It may change
-      # only public/explainer.json and public/explainer.html after the review (scripts/check-review.mjs).
-      - name: Explainer agent (project-explainer skill)
-        id: explainer
-        if: github.event_name == 'workflow_dispatch'
-        uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ github.token }}
-          prompt: >-
-            Run the project-explainer skill (.claude/skills/project-explainer/SKILL.md) on this repo as it is now.
-            Write public/explainer.json from the code, with the tour in talk-track order, run npm run build until it
-            passes, then commit only public/explainer.json and public/explainer.html. Change no other file. Do not push.
-          claude_args: >-
-            --max-turns 30
-            --disallowedTools "Bash(git push:*)"
-
-      - name: Record the explainer's tokens
-        if: github.event_name == 'workflow_dispatch' && steps.explainer.outputs.execution_file != ''
-        env:
-          EXECUTION_FILE: ${{ steps.explainer.outputs.execution_file }}
-        run: |
-          node scripts/explainer-usage.mjs "$EXECUTION_FILE" review/explainer-usage.json "$(git rev-parse HEAD)"
-          if [ -f review/explainer-usage.json ]; then
-            git add review/explainer-usage.json
-            git commit -qm "chore: record explainer tokens" || true
-          fi
-
       - name: Commit anything the agent left uncommitted
+        if: always()
         run: |
           if [ -n "$(git status --porcelain)" ]; then
             echo "::warning::the build agent left uncommitted changes; committing them"
@@ -137,8 +110,63 @@ jobs:
             git commit -m "chore: commit build output left uncommitted"
           fi
 
+      - name: Sha before the explainer
+        id: pre
+        if: always()
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # AD-13: the explainer is made last, from the code as built, by our project-explainer skill. Best effort: a
+      # failure here never throws away the build agent's work. Only public/explainer.json, public/explainer.html and
+      # review/ are kept from it (scripts/check-review.mjs allows those after the review).
+      - name: Explainer agent (project-explainer skill)
+        id: explainer
+        if: github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: >-
+            Run the project-explainer skill (.claude/skills/project-explainer/SKILL.md) on this repo as it is now.
+            Write public/explainer.json from the code, with the tour in talk-track order, and run npm run build until
+            it passes. Fix only public/explainer.json to get there: the workflow keeps public/explainer.json and
+            public/explainer.html and discards every other change. Do not edit project.json. Do not commit or push.
+          claude_args: >-
+            --max-turns 30
+            --disallowedTools "Bash(git push:*)"
+
+      - name: Keep only the explainer's files
+        if: always() && github.event_name == 'workflow_dispatch'
+        env:
+          PRE: ${{ steps.pre.outputs.sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git reset -q --soft "$PRE"
+          git reset -q
+          git add -A -- public/explainer.json public/explainer.html review/
+          dropped="$(git status --porcelain --untracked-files=all | grep -v '^[AM] ' || true)"
+          if [ -n "$dropped" ]; then echo "::warning::discarding explainer changes outside its files:"; echo "$dropped"; fi
+          git checkout -q -- .
+          git clean -fdq
+          if ! git diff --cached --quiet; then git commit -qm "docs: architecture explainer"; fi
+
+      - name: Record the explainer's tokens
+        if: always() && github.event_name == 'workflow_dispatch' && steps.explainer.outputs.execution_file != ''
+        env:
+          EXECUTION_FILE: ${{ steps.explainer.outputs.execution_file }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node scripts/explainer-usage.mjs "$EXECUTION_FILE" review/explainer-usage.json "$(git rev-parse HEAD)"
+          if [ -f review/explainer-usage.json ]; then
+            git add review/explainer-usage.json
+            git diff --cached --quiet || git commit -qm "chore: record explainer tokens"
+          fi
+
       - name: Bundle the agent's commits
         id: bundle
+        if: always()
         env:
           START: ${{ steps.start.outputs.sha }}
         run: |
@@ -147,6 +175,7 @@ jobs:
           if [ "$head" != "$START" ]; then git bundle create "$RUNNER_TEMP/agent.bundle" "$START..HEAD"; fi
 
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: agent-bundle
           path: ${{ runner.temp }}/agent.bundle
@@ -228,6 +257,8 @@ jobs:
     # in a headless Chrome on this runner, never on the Mac. Any failure ends in "clip: skipped (<reason>)" in the
     # job summary and no mp4; deploy runs either way and includes the clip only when one was made.
     needs: publish
+    # The template repo holds only the sample; Projects render their own.
+    if: github.event.repository.is_template != true
     runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 25
@@ -263,6 +294,9 @@ jobs:
             exit 0
           }
           hf() { npx --yes "hyperframes@${HYPERFRAMES_VERSION}" "$@"; }
+          if node scripts/check-placeholders.mjs 2>&1 | grep -q "explainer.json is still the template's sample"; then
+            skip "public/explainer.json is still the template's sample"
+          fi
           node scripts/build-clip.mjs "$out" > "$logs/build-clip.log" 2>&1 || skip "build-clip could not use public/explainer.json"
           if ! command -v ffmpeg >/dev/null 2>&1; then
             { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg; } > "$logs/ffmpeg.log" 2>&1 \

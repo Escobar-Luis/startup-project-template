@@ -15,6 +15,7 @@ export function App() {
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [hasClip, setHasClip] = useState(false);
 
   useEffect(() => {
     document.title = PROJECT.title;
@@ -22,6 +23,10 @@ export function App() {
       .then((r) => (r.ok ? r.json() : { examples: [] }))
       .then((b: { examples: string[] }) => setExamples(b.examples))
       .catch(() => setExamples([]));
+    // The clip exists only when CI rendered it (ship.yml render-clip).
+    fetch("/how-it-works.mp4", { method: "HEAD" })
+      .then((r) => setHasClip(r.ok && (r.headers.get("content-type") ?? "").startsWith("video/")))
+      .catch(() => setHasClip(false));
   }, []);
 
   async function ask(text: string) {
@@ -61,6 +66,16 @@ export function App() {
       <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-10">
         <h1 className="text-3xl font-semibold text-brand">{PROJECT.title}</h1>
         <p className="mt-3 text-lg leading-relaxed">{PROJECT.problem}</p>
+        <nav className="mt-3 flex gap-4 text-sm">
+          <a className="text-brand underline" href="/explainer.html">
+            How this works
+          </a>
+          {hasClip && (
+            <a className="text-brand underline" href="/how-it-works.mp4">
+              30-second video
+            </a>
+          )}
+        </nav>
 
         {examples.length > 0 && (
           <section className="mt-8">

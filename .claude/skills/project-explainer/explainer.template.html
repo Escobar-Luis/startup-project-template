@@ -47,7 +47,13 @@
   .t { display: grid; gap: 2px; min-width: 0; }
   .where { font-size: .8rem; color: var(--muted); }
   .say { color: var(--muted); }
-  .nav { display: flex; gap: 8px; margin-top: 12px; }
+  .nav { display: none; gap: 8px; margin-top: 12px; }
+  .js .nav { display: flex; }
+  #nodelist { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+  #nodelist[hidden] { display: none; }
+  #nodelist .lead { font-size: .8rem; color: var(--muted); }
+  #nodelist button { font: inherit; font-size: .85rem; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); cursor: pointer; }
+  #nodelist button.on { border-color: var(--accent); }
   .nav button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
   .nav button:disabled { opacity: .5; cursor: default; }
   @media (max-width: 760px) { main { grid-template-columns: minmax(0, 1fr); } }
@@ -62,6 +68,7 @@
   <section class="card" id="diagram" aria-label="Architecture diagram">
     <h2>Architecture <span class="hint">· click a box</span></h2>
     <pre class="mermaid">{{MERMAID}}</pre>
+    <div id="nodelist" hidden></div>
   </section>
   <section class="card" id="panels" aria-live="polite">
     <h2>Details</h2>
@@ -83,30 +90,61 @@
     document.documentElement.classList.add("js");
     const panels = [...document.querySelectorAll(".panel")];
     const steps = [...document.querySelectorAll(".step")];
+    const list = document.getElementById("nodelist");
     let at = -1;
     function show(node, step) {
       panels.forEach((p) => (p.hidden = p.dataset.node !== node));
       steps.forEach((s, i) => s.classList.toggle("on", i === step));
       document.querySelectorAll("#diagram g.node").forEach((g) => g.classList.toggle("on", g.dataset.explainerNode === node));
+      list.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.node === node));
       at = step;
       document.getElementById("prev").disabled = at <= 0;
       document.getElementById("next").disabled = at >= steps.length - 1;
     }
+    const stepOf = (node) => steps.findIndex((s) => s.dataset.node === node);
+    // Plain buttons for nodes the diagram can't reach: those outside the tour, or every node when Mermaid can't load.
+    function listNodes(ids, lead) {
+      list.replaceChildren();
+      if (!ids.length) return (list.hidden = true);
+      const span = document.createElement("span");
+      span.className = "lead";
+      span.textContent = lead;
+      list.append(span);
+      for (const id of ids) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.dataset.node = id;
+        b.textContent = data.labels[id];
+        b.addEventListener("click", () => show(id, stepOf(id)));
+        list.append(b);
+      }
+      list.hidden = false;
+    }
+    const all = Object.values(data.nodes);
+    listNodes(all.filter((id) => !data.tour.includes(id)), "Not on the tour:");
     window.explainerShow = show;
+    window.explainerListAll = () => listNodes(all, "Parts:");
+    window.explainerNodes = data.nodes;
     steps.forEach((s, i) => s.querySelector("button").addEventListener("click", () => show(s.dataset.node, i)));
     document.getElementById("prev").addEventListener("click", () => at > 0 && show(data.tour[at - 1], at - 1));
     document.getElementById("next").addEventListener("click", () => at < steps.length - 1 && show(data.tour[at + 1], at + 1));
-    window.explainerNodes = data.nodes;
     show(data.tour[0], 0);
   })();
 </script>
 <script type="module">
-  // Mermaid from a pinned CDN URL. If it cannot load (offline), the diagram source stays readable as text.
-  import mermaid from "{{MERMAID_URL}}";
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-  mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default" });
-  await mermaid.run({ querySelector: "#diagram pre.mermaid" });
+  // Mermaid from a pinned CDN URL. If it cannot load (offline), the source stays as text and every part gets a button.
+  let mermaid;
+  try {
+    mermaid = (await import("{{MERMAID_URL}}")).default;
+    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default" });
+    await mermaid.run({ querySelector: "#diagram pre.mermaid" });
+  } catch (e) {
+    window.explainerListAll();
+    throw e;
+  }
   const keys = window.explainerNodes;
+  const stepOf = (node) => [...document.querySelectorAll(".step")].findIndex((s) => s.dataset.node === node);
   document.querySelectorAll("#diagram g.node").forEach((g) => {
     const key = g.dataset.id || (g.id.match(/flowchart-(n\d+)-\d+$/) || [])[1];
     const node = keys[key];
@@ -114,10 +152,7 @@
     g.dataset.explainerNode = node;
     g.setAttribute("tabindex", "0");
     g.setAttribute("role", "button");
-    const pick = () => {
-      const step = [...document.querySelectorAll(".step")].findIndex((s) => s.dataset.node === node);
-      window.explainerShow(node, step);
-    };
+    const pick = () => window.explainerShow(node, stepOf(node));
     g.addEventListener("click", pick);
     g.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), pick()));
   });

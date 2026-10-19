@@ -1,6 +1,19 @@
 #!/usr/bin/env node
 // Deploy gate: template placeholders must not ship. Run from the repo root.
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+
+// The template's own sample explainer (public/explainer.json in the template repo): its title, and a hash of its
+// node ids and tour order, so a Project that only deleted "template_sample" is still refused.
+export const SAMPLE_TITLE = "startup-project-template";
+export const SAMPLE_FINGERPRINT = "988f0c9697d45dbea30b538d83d9e7031b45fe977e5eccd3e3c4b4cae16b6b3f";
+
+/** sha256 of the node ids and the tour's node order. */
+export function explainerFingerprint(data) {
+  const nodes = Array.isArray(data?.nodes) ? data.nodes.map((n) => n?.id) : [];
+  const tour = Array.isArray(data?.tour) ? data.tour.map((s) => s?.node) : [];
+  return createHash("sha256").update(JSON.stringify({ nodes, tour })).digest("hex");
+}
 import { pathToFileURL } from "node:url";
 
 /** Returns the reasons the repo still holds template placeholders; empty means ok. */
@@ -29,7 +42,11 @@ export function placeholderProblems(read = (p) => readFileSync(p, "utf8")) {
   }
   try {
     const explainer = read("public/explainer.json");
-    if (explainer !== undefined && JSON.parse(explainer)?.template_sample === true) {
+    const data = explainer === undefined ? undefined : JSON.parse(explainer);
+    if (
+      data &&
+      (data.template_sample === true || data.title === SAMPLE_TITLE || explainerFingerprint(data) === SAMPLE_FINGERPRINT)
+    ) {
       problems.push("public/explainer.json is still the template's sample; run the project-explainer skill");
     }
   } catch {

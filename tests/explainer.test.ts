@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 import { Window } from "happy-dom";
 import {
   MERMAID_URL,
+  NODES_MAX,
+  NODES_MIN,
+  TOUR_MAX,
   SHELL,
   SLOTS,
   explainerProblems,
@@ -199,14 +202,19 @@ describe("the template's own explainer", () => {
   const data = JSON.parse(readFileSync("public/explainer.json", "utf8"));
   const project = JSON.parse(readFileSync("project.json", "utf8"));
 
-  it("is valid, with 5+ nodes, files that exist and a tour", () => {
+  it("is valid, within the build's limits (3-12 nodes, 1-12 tour stops), with files that exist", () => {
     expect(explainerProblems(data, (f: string) => existsSync(f))).toEqual([]);
-    expect(data.nodes.length).toBeGreaterThanOrEqual(5);
-    expect(data.tour.length).toBeGreaterThanOrEqual(5);
+    expect(data.nodes.length).toBeGreaterThanOrEqual(NODES_MIN);
+    expect(data.nodes.length).toBeLessThanOrEqual(NODES_MAX);
+    expect(data.tour.length).toBeGreaterThanOrEqual(1);
+    expect(data.tour.length).toBeLessThanOrEqual(TOUR_MAX);
   });
 
-  it("the committed public/explainer.html matches its data (run npm run explainer)", () => {
-    expect(readFileSync("public/explainer.html", "utf8")).toBe(renderExplainer(data, shell, project));
+  it("the committed public/explainer.html matches its data", () => {
+    expect(
+      readFileSync("public/explainer.html", "utf8") === renderExplainer(data, shell, project),
+      "public/explainer.html is out of date: run npm run build to regenerate public/explainer.html",
+    ).toBe(true);
   });
 
   it("the deploy refuses the template's sample, even with the flag deleted", () => {

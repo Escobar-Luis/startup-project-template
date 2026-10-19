@@ -1,0 +1,51 @@
+{
+  "name": "startup-project-template",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.worker.json && tsc -p tsconfig.web.json && vite build && node scripts/check-bundle.mjs dist",
+    "build:worker": "wrangler deploy --dry-run --outdir .wrangler/bundle",
+    "deploy": "wrangler deploy",
+    "stack:check": "python3 tools/stack_check.py --dry-run",
+    "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.web.json",
+    "eval": "promptfoo eval -c evals/promptfooconfig.yaml --no-progress-bar"
+  },
+  "dependencies": {
+    "@ai-sdk/groq": "4.0.65",
+    "@langfuse/tracing": "5.14.0",
+    "@neondatabase/serverless": "1.2.0",
+    "@openrouter/ai-sdk-provider": "3.1.0",
+    "ai": "7.0.145",
+    "ai-gateway-provider": "4.0.1",
+    "drizzle-orm": "0.45.4",
+    "hono": "4.13.13",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "workers-ai-provider": "4.0.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261019.1",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "promptfoo": "0.124.1",
+    "shadcn": "4.22.1",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.4",
+    "vitest": "5.0.5",
+    "wrangler": "4.151.2"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "workerd@1.20261019.1": true
+  }
+}

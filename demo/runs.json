@@ -1,0 +1,8 @@
+[
+  {
+    "input": "Example question the build agent replaces",
+    "output": "Template placeholder. The build agent records 3-5 real runs here, each output produced by the model named in its model field.",
+    "model": "template-placeholder",
+    "recorded_at": "2026-10-19T00:00:00Z"
+  }
+]

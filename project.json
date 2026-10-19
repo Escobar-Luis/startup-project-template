@@ -1,0 +1,15 @@
+{
+  "startup": {
+    "name": "Example Startup",
+    "domain": "example.com"
+  },
+  "title": "Example Project",
+  "problem": "One sentence naming who hurts and what this Project shows about fixing it. The build agent replaces this.",
+  "colors": {
+    "primary": "#1d4ed8",
+    "accent": "#d97706",
+    "background": "#f8fafc",
+    "text": "#0f172a"
+  },
+  "examples_title": "Try a recorded example"
+}

@@ -1,0 +1,236 @@
+# Build then deploy one Project (AD-5). Heavy work runs here, never on the Mac.
+# build:  GitHub Environment "build"  holds only CLAUDE_CODE_OAUTH_TOKEN.
+# deploy: GitHub Environment "deploy" holds CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, NEON_API_KEY
+#         (+ optional NEON_ORG_ID, GROQ_API_KEY, OPENROUTER_API_KEY). The build agent never sees them.
+name: ship
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_turns:
+        description: "Build agent turn budget (FR-8)"
+        type: number
+        default: 80
+      timeout_minutes:
+        description: "Build job time budget in minutes (FR-8)"
+        type: number
+        default: 60
+      prompt:
+        description: "Build prompt (empty: follow AGENTS.md)"
+        type: string
+        default: ""
+  push:
+    branches: [main]
+# Never pull_request_target: a fork must never reach these secrets.
+
+concurrency:
+  group: ship-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  GITLEAKS_VERSION: 8.30.1
+  NODE_VERSION: "24"
+
+jobs:
+  build:
+    # Pushes count only from the repo owner; dispatch already needs write access.
+    if: github.event_name == 'workflow_dispatch' || github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    environment: build
+    timeout-minutes: ${{ inputs.timeout_minutes || 60 }}
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: read
+    outputs:
+      sha: ${{ steps.push.outputs.sha }}
+    steps:
+      - name: Require CLAUDE_CODE_OAUTH_TOKEN
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::missing CLAUDE_CODE_OAUTH_TOKEN: set it with 'gh secret set CLAUDE_CODE_OAUTH_TOKEN --env build' (from 'claude setup-token'). Nothing was built or deployed."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The build agent gets no push credentials; only the push step below (after gitleaks) can push.
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Git identity for the build agent
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Build agent
+        if: github.event_name == 'workflow_dispatch'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: ${{ inputs.prompt || 'Read AGENTS.md and follow it. Build this Project end to end, run npm test and npm run build until both pass, write review/code-review.md, and commit your work with conventional commit messages. Do not push.' }}
+          claude_args: >-
+            --max-turns ${{ inputs.max_turns }}
+            --disallowedTools "Bash(git push:*)"
+
+      - name: Commit anything the agent left uncommitted
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::warning::the build agent left uncommitted changes; committing them"
+            git add -A
+            git commit -m "chore: commit build output left uncommitted"
+          fi
+
+      - run: npm test
+      - run: npm run build
+      - run: npm run build:worker
+
+      - name: gitleaks (before any push)
+        run: |
+          curl -sSfL -o gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o checksums.txt "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz$" checksums.txt | awk '{print $1"  gitleaks.tgz"}' | sha256sum -c -
+          tar -xzf gitleaks.tgz gitleaks && rm gitleaks.tgz checksums.txt
+          ./gitleaks git --config .gitleaks.toml --redact --exit-code 1 .
+          ./gitleaks dir --config .gitleaks.toml --redact --exit-code 1 dist
+          rm gitleaks
+
+      - name: Push
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: build
+    # The template repo itself only builds and tests; Projects made from it deploy.
+    if: github.event.repository.is_template != true
+    runs-on: ubuntu-latest
+    environment: deploy
+    timeout-minutes: 20
+    permissions:
+      contents: write   # gh-pages branch
+    steps:
+      - name: Require deploy secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+        run: |
+          missing=""
+          for k in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID NEON_API_KEY; do
+            if [ -z "${!k}" ]; then missing="$missing $k"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing deploy secret(s):$missing (gh secret set <NAME> --env deploy). Nothing was deployed."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Gate on open high review findings
+        run: node scripts/check-review.mjs review/code-review.md
+
+      - name: Provision Neon (project, schema, RLS, app role, demo runs)
+        id: neon
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_ORG_ID: ${{ secrets.NEON_ORG_ID }}
+          NEON_PROJECT_NAME: ${{ github.event.repository.name }}
+          OUT_DIR: ${{ runner.temp }}
+        run: node scripts/provision-neon.mjs
+
+      - name: Gate on database size (200 MB)
+        env:
+          NEON_OWNER_URL_FILE: ${{ runner.temp }}/neon-owner-url
+        run: node scripts/db-size.mjs
+
+      - run: npm run build
+
+      - name: Deploy Worker
+        id: wrangler
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.151.2"
+          command: deploy --name ${{ github.event.repository.name }} --var GIT_SHA:${{ needs.build.outputs.sha }}
+
+      - name: Worker secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          WORKER: ${{ github.event.repository.name }}
+        run: |
+          npx wrangler secret put DATABASE_URL --name "$WORKER" < "$RUNNER_TEMP/neon-app-url"
+          for k in GROQ_API_KEY OPENROUTER_API_KEY; do
+            # A missing key is skipped; llm() then skips that provider.
+            if [ -n "${!k}" ]; then printf '%s' "${!k}" | npx wrangler secret put "$k" --name "$WORKER"; fi
+          done
+          rm -f "$RUNNER_TEMP/neon-app-url" "$RUNNER_TEMP/neon-owner-url"
+
+      - name: Smoke-check /health on the live Worker
+        env:
+          LIVE_URL: ${{ steps.wrangler.outputs.deployment-url }}
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -sSf --max-time 15 "$LIVE_URL/health"; then echo; exit 0; fi
+            sleep 5
+          done
+          echo "::error::$LIVE_URL/health did not answer 200"
+          exit 1
+
+      - name: Write deployed.json and publish Pages
+        env:
+          LIVE_URL: ${{ steps.wrangler.outputs.deployment-url }}
+          SHA: ${{ needs.build.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$LIVE_URL" ]; then echo "::error::wrangler reported no deployment URL"; exit 1; fi
+          mkdir -p _site
+          node -e 'const fs=require("fs");fs.writeFileSync("_site/deployed.json",JSON.stringify({sha:process.env.SHA,live_url:process.env.LIVE_URL,deployed_at:new Date().toISOString()},null,2)+"\n")'
+          cp pages/index.html project.json _site/
+          cp demo/runs.json _site/demo-runs.json
+          for f in public/explainer.html public/how-it-works.mp4; do
+            if [ -f "$f" ]; then cp "$f" _site/; fi
+          done
+          touch _site/.nojekyll
+          cat _site/deployed.json
+          cd _site
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "deploy ${SHA}"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+          # First deploy: point Pages at gh-pages. Needs admin; the startup-run build step also does this.
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/pages" -f "source[branch]=gh-pages" -f "source[path]=/" >/dev/null 2>&1 || true

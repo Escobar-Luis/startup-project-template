@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project demo</title>
+<!-- The stable link (AD-8). Notes and the Study Page link this page, never the Worker.
+     It probes the live Worker from deployed.json; if the Worker answers it goes there,
+     otherwise it shows the recorded demo runs. It never needs the Worker to exist. -->
+<style>
+  :root { --brand: #1d4ed8; --accent: #d97706; --page: #f8fafc; --ink: #0f172a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--page); color: var(--ink); }
+  main { max-width: 42rem; margin: 0 auto; padding: 2.5rem 1rem; }
+  h1 { color: var(--brand); font-size: 1.9rem; margin: 0 0 .5rem; }
+  .status { padding: .6rem .8rem; border-radius: .5rem; background: color-mix(in srgb, var(--accent) 15%, transparent); font-weight: 500; }
+  .run { background: #fff; border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: .6rem; padding: 1rem; margin: 1rem 0; }
+  .run h3 { margin: 0 0 .4rem; font-size: 1rem; }
+  .run pre { white-space: pre-wrap; margin: 0; font: inherit; }
+  .meta { font-size: .8rem; opacity: .6; margin-top: .5rem; }
+  a.button { display: inline-block; background: var(--brand); color: #fff; padding: .55rem 1rem; border-radius: .5rem; text-decoration: none; font-weight: 600; }
+  nav a { margin-right: 1rem; }
+  footer { text-align: center; font-size: .85rem; opacity: .7; padding: 1rem; border-top: 1px solid color-mix(in srgb, var(--ink) 10%, transparent); }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Project demo</h1>
+  <p id="problem"></p>
+  <p id="status" class="status" role="status">Checking whether the live app is up…</p>
+  <p id="live" hidden><a class="button" id="live-link" href="#">Open the live app</a></p>
+  <nav id="links"></nav>
+  <section id="runs" hidden>
+    <h2>Recorded runs</h2>
+    <div id="run-list"></div>
+  </section>
+</main>
+<footer id="footer"></footer>
+<script>
+(async function () {
+  const PROBE_MS = 6000; // Neon and the Worker can take a moment to wake
+  const $ = (id) => document.getElementById(id);
+  const getJSON = (url) => fetch(url, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const text = (el, s) => { el.textContent = s; };
+
+  const [project, deployed, runs] = await Promise.all([getJSON("project.json"), getJSON("deployed.json"), getJSON("demo-runs.json")]);
+
+  if (project) {
+    const c = project.colors || {};
+    const root = document.documentElement.style;
+    if (c.primary) root.setProperty("--brand", c.primary);
+    if (c.accent) root.setProperty("--accent", c.accent);
+    if (c.background) root.setProperty("--page", c.background);
+    if (c.text) root.setProperty("--ink", c.text);
+    document.title = project.title || document.title;
+    text($("title"), project.title || "Project demo");
+    text($("problem"), project.problem || "");
+    text($("footer"), "independent demo by Luis Escobar, not affiliated with " + ((project.startup && project.startup.name) || "the company named above"));
+  }
+
+  const links = $("links");
+  for (const [href, label] of [["explainer.html", "How it works"], ["how-it-works.mp4", "30-second video"]]) {
+    const head = await fetch(href, { method: "HEAD" }).catch(() => null);
+    if (head && head.ok) { const a = document.createElement("a"); a.href = href; a.textContent = label; links.appendChild(a); }
+  }
+
+  async function probe(url) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), PROBE_MS);
+    try {
+      const r = await fetch(url.replace(/\/$/, "") + "/health", { signal: ctl.signal, cache: "no-store" });
+      return r.ok;  // 200 means the Worker is up; demo mode inside it covers a sleeping database or spent quota
+    } catch (e) { return false; } finally { clearTimeout(timer); }
+  }
+
+  const live = deployed && deployed.live_url ? await probe(deployed.live_url) : false;
+  if (live) {
+    text($("status"), "The live app is up.");
+    $("live-link").href = deployed.live_url;
+    $("live").hidden = false;
+    if (!new URLSearchParams(location.search).has("stay")) location.replace(deployed.live_url);
+    return;
+  }
+
+  text($("status"), "The live app is resting. Showing recorded runs.");
+  const list = $("run-list");
+  for (const run of Array.isArray(runs) ? runs : []) {
+    const div = document.createElement("div");
+    div.className = "run";
+    const h = document.createElement("h3"); h.textContent = run.input;
+    const pre = document.createElement("pre"); pre.textContent = run.output;
+    const meta = document.createElement("p"); meta.className = "meta"; meta.textContent = "recorded run · " + run.model + (run.recorded_at ? " · " + run.recorded_at.slice(0, 10) : "");
+    div.append(h, pre, meta);
+    list.appendChild(div);
+  }
+  $("runs").hidden = false;
+})();
+</script>
+</body>
+</html>

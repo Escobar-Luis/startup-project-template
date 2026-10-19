@@ -1,0 +1,33 @@
+# gitleaks v8.30.1. Default rules plus Project-specific ones; runs before any push (ship.yml).
+title = "startup-project-template"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "postgres-url-with-password"
+description = "Postgres connection string with a password"
+regex = '''postgres(?:ql)?://[^:\s/]+:[^@\s]+@[^\s'"]+'''
+keywords = ["postgres://", "postgresql://"]
+
+[[rules]]
+id = "groq-api-key"
+description = "Groq API key"
+regex = '''gsk_[A-Za-z0-9]{40,}'''
+keywords = ["gsk_"]
+
+[[rules]]
+id = "openrouter-api-key"
+description = "OpenRouter API key"
+regex = '''sk-or-v1-[a-f0-9]{48,}'''
+keywords = ["sk-or-v1-"]
+
+[[rules]]
+id = "claude-oauth-token"
+description = "Claude Code OAuth token"
+regex = '''sk-ant-oat01-[A-Za-z0-9_\-]{20,}'''
+keywords = ["sk-ant-oat01-"]
+
+[allowlist]
+description = "Lockfile integrity hashes and test fixtures"
+paths = ['''package-lock\.json''']

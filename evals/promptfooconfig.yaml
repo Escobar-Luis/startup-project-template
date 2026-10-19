@@ -1,0 +1,21 @@
+# promptfoo 0.124.1 evals, run in CI only (never on the Mac): LIVE_URL=<worker url> npm run eval
+# The build agent turns each demo run and each flagged trace into a case here.
+description: Project main-flow evals against the live Worker
+providers:
+  - id: https
+    config:
+      url: "{{ env.LIVE_URL }}/api/ask"
+      method: POST
+      headers:
+        content-type: application/json
+      body:
+        prompt: "{{prompt}}"
+      transformResponse: json.text
+prompts:
+  - "{{input}}"
+tests:
+  - vars:
+      input: Example question the build agent replaces
+    assert:
+      - type: javascript
+        value: output.length > 0

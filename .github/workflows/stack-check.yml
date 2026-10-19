@@ -1,0 +1,34 @@
+# Weekly stack check (AD-17): flags version and free-tier page changes, never changes a pin.
+# Runs only in the template repo; Projects made from it skip it.
+name: stack-check
+
+on:
+  schedule:
+    - cron: "17 13 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: github.repository == 'Escobar-Luis/startup-project-template'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore the last page snapshot
+        uses: actions/cache/restore@v4
+        with:
+          path: tools/.stack-snapshot.json
+          key: stack-snapshot-${{ github.run_id }}
+          restore-keys: stack-snapshot-
+      - name: Check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/stack_check.py
+      - name: Save the page snapshot
+        uses: actions/cache/save@v4
+        with:
+          path: tools/.stack-snapshot.json
+          key: stack-snapshot-${{ github.run_id }}

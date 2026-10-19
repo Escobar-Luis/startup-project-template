@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEMO_BANNER, closestRow, defaultProviders, llm } from "../src/worker/llm";
+import { DEMO_BANNER, NO_RUNS_TEXT, closestRow, defaultProviders, llm } from "../src/worker/llm";
 import { DEMO_ROWS, allowAll, denyAll, env, fakeAI, fakeFetch, fakeStore } from "./fakes";
 
 const NOW = new Date("2026-10-19T12:00:00Z");
@@ -90,6 +90,18 @@ describe("llm() chain (AD-7)", () => {
     const r = await llm("hello", { env: env({ AI }), store: null, visitor: "v", now: NOW });
     expect(r).toMatchObject({ source: "demo", banner: DEMO_BANNER });
     expect(AI.run).not.toHaveBeenCalled();
+  });
+
+  it("empty demo set: a 'No recorded runs yet' demo answer with the banner, no throw", async () => {
+    const r = await llm("hello", { env: env(), store: fakeStore({ rows: [] }), visitor: "v", now: NOW, demoRuns: [] });
+    expect(r).toMatchObject({ kind: "answer", source: "demo", text: NO_RUNS_TEXT, banner: DEMO_BANNER });
+    expect(NO_RUNS_TEXT).toBe("No recorded runs yet");
+  });
+
+  it("a rate-limit binding that throws lets the request through", async () => {
+    const VISITOR_LIMIT = { limit: async () => { throw new Error("binding unavailable"); } };
+    const r = await llm("hello", { env: env({ AI: fakeAI("ok"), VISITOR_LIMIT }), store: fakeStore(), visitor: "v", now: NOW });
+    expect(r).toMatchObject({ kind: "answer", source: "workers-ai" });
   });
 
   it("provider order is Workers AI, Groq, OpenRouter", () => {

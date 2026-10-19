@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   check:
@@ -26,7 +27,20 @@ jobs:
       - name: Check
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 tools/stack_check.py
+        run: python3 tools/stack_check.py --flags-file "$RUNNER_TEMP/flags.md"
+      - name: Open or update the "stack check flags" issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -s "$RUNNER_TEMP/flags.md" ]; then echo "no flags"; exit 0; fi
+          { echo "Weekly stack check, run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"; echo; cat "$RUNNER_TEMP/flags.md"; } > "$RUNNER_TEMP/body.md"
+          n="$(gh issue list --state open --search 'in:title "stack check flags"' --json number,title --jq '[.[] | select(.title == "stack check flags")][0].number // empty')"
+          if [ -n "$n" ]; then
+            gh issue edit "$n" --body-file "$RUNNER_TEMP/body.md"
+            gh issue comment "$n" --body "Updated by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          else
+            gh issue create --title "stack check flags" --body-file "$RUNNER_TEMP/body.md"
+          fi
       - name: Save the page snapshot
         uses: actions/cache/save@v6
         with:

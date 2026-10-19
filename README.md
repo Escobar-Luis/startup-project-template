@@ -19,7 +19,7 @@ The template ships:
 2. A Hono API on the same Worker under `/api/*`, plus `/health` (`{ok, db, sha}`, always 200).
 3. `llm()` (`src/worker/llm.ts`): per-visitor rate limit, a daily counter in Neon, then Workers AI, Groq and OpenRouter free tiers, then demo mode with the banner "Live AI quota reached, showing a recorded run".
 4. Neon Postgres per Project through drizzle over HTTP, with row-level security on visitor input (`db/rls.sql`).
-5. `.github/workflows/ship.yml`: a `build` job (Claude Code action, tests, build, gitleaks, push) and a `deploy` job (review gate, Neon provisioning, size gate, wrangler deploy, secrets, `deployed.json`, GitHub Pages).
+5. `.github/workflows/ship.yml`: a `build` job (Claude Code action with a read-only token), a `publish` job on a fresh runner (protected-path check, rebase on main, tests, build, gitleaks, push) and a `deploy` job (review, placeholder, Pages and size gates, Neon provisioning, wrangler deploy with its secrets in the same version, `/health` smoke check needing `db:true`, `deployed.json`, GitHub Pages).
 6. A GitHub Pages front (`pages/index.html`) that sends visitors to the live Worker when it answers and shows the recorded runs when it does not. It is the link to share; it outlives the Worker.
 
 The footer reads "independent demo by Luis Escobar, not affiliated with <company>".
@@ -45,7 +45,13 @@ gh secret set OPENROUTER_API_KEY --env deploy       # optional
 gh workflow run ship.yml -f max_turns=80 -f timeout_minutes=60
 ```
 
-Pages is served from the `gh-pages` branch, which the deploy job writes.
+Pages is served from the `gh-pages` branch, which the deploy job writes. The workflow's token cannot turn Pages on,
+so the deploy fails with "Pages not enabled" until it is on. The build step (story 3.9) enables it once from the Mac:
+
+```bash
+git push origin "$(git commit-tree "$(git hash-object -t tree /dev/null)" -m 'chore: gh-pages')":refs/heads/gh-pages
+gh api -X POST repos/Escobar-Luis/<repo>/pages -f build_type=legacy -f 'source[branch]=gh-pages' -f 'source[path]=/'
+```
 
 ## stack_note
 

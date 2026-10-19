@@ -51,6 +51,8 @@ export interface LlmContext {
   providers?: Provider[];
   system?: string;
   now?: Date;
+  /** Fallback recorded runs when demo_cache cannot be read (default: bundled demo/runs.json). */
+  demoRuns?: DemoRow[];
   /** Test seam for HTTP providers (Groq, OpenRouter). */
   fetch?: typeof globalThis.fetch;
 }
@@ -119,7 +121,7 @@ export async function llm(prompt: string, ctx: LlmContext): Promise<LlmResult> {
   const day = (ctx.now ?? new Date()).toISOString().slice(0, 10);
   // No database, or a database error, fails closed to demo mode: the counter is what keeps spend at $0.
   const reserved = ctx.store ? await ctx.store.reserveCall(day, dailyCap(ctx.env)).catch(() => false) : false;
-  if (!reserved) return demoAnswer(prompt, ctx.store, attempts);
+  if (!reserved) return demoAnswer(prompt, ctx.store, attempts, ctx.demoRuns);
 
   const providers = ctx.providers ?? defaultProviders(ctx.env, ctx.fetch);
   for (const provider of providers) {
@@ -131,16 +133,22 @@ export async function llm(prompt: string, ctx: LlmContext): Promise<LlmResult> {
       attempts.push({ provider: provider.name, error: describeError(error) });
     }
   }
-  return demoAnswer(prompt, ctx.store, attempts);
+  return demoAnswer(prompt, ctx.store, attempts, ctx.demoRuns);
 }
 
-export async function loadDemoRows(store: Store | null): Promise<DemoRow[]> {
+export async function loadDemoRows(store: Store | null, bundled: DemoRow[] = recordedRuns as DemoRow[]): Promise<DemoRow[]> {
   const rows = store ? await store.demoRows().catch(() => [] as DemoRow[]) : [];
-  return rows.length > 0 ? rows : (recordedRuns as DemoRow[]);
+  return rows.length > 0 ? rows : bundled;
 }
 
-async function demoAnswer(prompt: string, store: Store | null, attempts: Attempt[]): Promise<LlmResult> {
-  const row = closestRow(prompt, await loadDemoRows(store));
+export const NO_RUNS_TEXT = "No recorded runs yet";
+
+async function demoAnswer(prompt: string, store: Store | null, attempts: Attempt[], bundled?: DemoRow[]): Promise<LlmResult> {
+  const rows = await loadDemoRows(store, bundled);
+  if (rows.length === 0) {
+    return { kind: "answer", text: NO_RUNS_TEXT, source: "demo", model: "none", banner: DEMO_BANNER, attempts };
+  }
+  const row = closestRow(prompt, rows);
   return {
     kind: "answer",
     text: row.output,

@@ -24,8 +24,9 @@ These rules bind every agent working in this repo.
 2. Every LLM call goes through `llm()` in `src/worker/llm.ts`. Never call a provider directly.
 3. Never add a card-only service, a paid tier, or Next/OpenNext.
 4. The database URL and all keys live only in the Worker (`env`). Never import `src/worker` from `src/web`, and never put a key or a `postgres://` string in client code or in the repo.
-5. Any new table that holds visitor input gets row-level security in `db/rls.sql`, mirrored in `db/init.sql` and `db/schema.ts`.
+5. A new table goes in `db/init.sql` and `db/schema.ts`. The app role gets SELECT, INSERT and UPDATE on it by default (`db/rls.sql`); narrow that with REVOKE/GRANT in `db/rls.sql` when the Worker needs less. A table that holds visitor input also gets `ENABLE` and `FORCE ROW LEVEL SECURITY` and a policy keyed on `current_setting('app.visitor', true)` in `db/rls.sql`, like `submissions`.
 6. Heavy compute happens at build time and is committed; a Worker request has 10 ms of CPU.
+7. Never change `.gitleaks.toml`, `.gitleaksignore`, `scripts/` or `.github/`. The publish job refuses the whole build if you do.
 
 ## Brand and honesty
 
@@ -39,12 +40,22 @@ These rules bind every agent working in this repo.
 2. `demo/runs.json`: 3-5 recorded runs (`input`, `output`, `model`, `recorded_at`). Each output must be a real model output, and `model` must name the model that produced it.
 3. `README.md`: the sections problem, evidence, what was built, how to run, stack_note.
 4. `public/explainer.html`: the architecture explainer (AD-13).
-5. `review/code-review.md`: one finding per checklist line, severity first. The deploy job refuses any open high (or critical) line:
+5. `review/code-review.md`, written last, after your final code commit. The deploy job checks it:
+   - the first line is `# Code review: <sha>`, the commit you reviewed; only `review/` may change after it;
+   - at least one checklist line; write `- [x] none: no findings` if there are none;
+   - no unchecked line that mentions high or critical, and no unchecked line under a High or Critical heading.
 
 ```markdown
-# Code review: <short sha>
+# Code review: <full or short sha>
 
 - [x] high: <finding>, fixed in <commit>
 - [ ] medium: <finding>
 - [ ] low: <finding>
 ```
+
+6. Placeholders: the deploy refuses while `project.json` names "Example Startup", `demo/runs.json` has fewer than 3 runs or a `template-placeholder` run, or the README still says "Replace with".
+
+## GitHub Pages
+
+The deploy job publishes the stable front to the `gh-pages` branch, and fails with "Pages not enabled" if Pages is off.
+Its token cannot enable Pages; the build step (story 3.9) does it once from the Mac (see README).

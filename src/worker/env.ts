@@ -10,6 +10,8 @@ export interface Env {
   GROQ_API_KEY?: string;
   OPENROUTER_API_KEY?: string;
   AI_GATEWAY_ID?: string;
+  /** Per-Project secret for HMAC visitor keys; the deploy job generates it once. */
+  VISITOR_PEPPER?: string;
   DAILY_LLM_CAP?: string;
   GIT_SHA?: string;
 }

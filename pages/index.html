@@ -35,7 +35,7 @@
     <div id="run-list"></div>
   </section>
 </main>
-<footer id="footer"></footer>
+<footer id="footer">independent demo by Luis Escobar, not affiliated with the company this demo is about</footer>
 <script>
 (async function () {
   const PROBE_MS = 6000; // Neon and the Worker can take a moment to wake
@@ -45,6 +45,10 @@
 
   const [project, deployed, runs] = await Promise.all([getJSON("project.json"), getJSON("deployed.json"), getJSON("demo-runs.json")]);
 
+  const str = (v, fallback) => (typeof v === "string" && v.trim() ? v : fallback);
+  // The non-affiliation line always renders, even when project.json fails to load.
+  text($("footer"), "independent demo by Luis Escobar, not affiliated with " + str(project && project.startup && project.startup.name, "the company this demo is about"));
+
   if (project) {
     const c = project.colors || {};
     const root = document.documentElement.style;
@@ -52,10 +56,9 @@
     if (c.accent) root.setProperty("--accent", c.accent);
     if (c.background) root.setProperty("--page", c.background);
     if (c.text) root.setProperty("--ink", c.text);
-    document.title = project.title || document.title;
-    text($("title"), project.title || "Project demo");
-    text($("problem"), project.problem || "");
-    text($("footer"), "independent demo by Luis Escobar, not affiliated with " + ((project.startup && project.startup.name) || "the company named above"));
+    document.title = str(project.title, document.title);
+    text($("title"), str(project.title, "Project demo"));
+    text($("problem"), str(project.problem, ""));
   }
 
   const links = $("links");
@@ -85,11 +88,13 @@
   text($("status"), "The live app is resting. Showing recorded runs.");
   const list = $("run-list");
   for (const run of Array.isArray(runs) ? runs : []) {
+    if (!run || typeof run !== "object") continue;
     const div = document.createElement("div");
     div.className = "run";
-    const h = document.createElement("h3"); h.textContent = run.input;
-    const pre = document.createElement("pre"); pre.textContent = run.output;
-    const meta = document.createElement("p"); meta.className = "meta"; meta.textContent = "recorded run · " + run.model + (run.recorded_at ? " · " + run.recorded_at.slice(0, 10) : "");
+    const h = document.createElement("h3"); h.textContent = str(run.input, "(no input recorded)");
+    const pre = document.createElement("pre"); pre.textContent = str(run.output, "(no output recorded)");
+    const meta = document.createElement("p"); meta.className = "meta";
+    meta.textContent = "recorded run · " + str(run.model, "unknown model") + (typeof run.recorded_at === "string" ? " · " + run.recorded_at.slice(0, 10) : "");
     div.append(h, pre, meta);
     list.appendChild(div);
   }

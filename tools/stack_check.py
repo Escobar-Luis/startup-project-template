@@ -39,6 +39,14 @@ PRICING_PAGES = [
     "https://langfuse.com/pricing",
 ]
 
+# Pinned model ids (src/worker/llm.ts). OpenRouter is checked against its public models list;
+# the others have no keyless list, so they print as manual checks.
+OPENROUTER_MODEL = "openrouter/free"
+MANUAL_MODEL_CHECKS = {
+    "@cf/google/gemma-4-26b-a4b-it": "https://developers.cloudflare.com/workers-ai/models/",
+    "openai/gpt-oss-120b (Groq)": "https://console.groq.com/docs/models",
+}
+
 # GitHub releases behind the workflow pins.
 ACTIONS = {
     "cloudflare/wrangler-action": r"cloudflare/wrangler-action@(v[\d.]+)",
@@ -116,12 +124,34 @@ def compare(pinned: str, latest: str, released: str | None, now: dt.datetime) ->
 def page_fingerprint(url: str) -> str:
     raw = get(url, accept="text/html").decode("utf-8", "replace")
     raw = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", raw)
-    text = html.unescape(re.sub(r"<[^>]+>", " ", raw))
-    text = re.sub(r"\s+", " ", text).strip()
+    text = strip_volatile(html.unescape(re.sub(r"<[^>]+>", " ", raw)))
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def run(dry_run: bool, offline_pages: bool = False) -> list[str]:
+MONTHS = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+DATE_PATTERNS = [
+    r"\b\d{4}-\d{2}-\d{2}(?:[T ][\d:.]+Z?)?\b",  # 2026-10-19, ISO timestamps
+    rf"(?i)\b{MONTHS}\s+\d{{1,2}},?\s+\d{{4}}\b",  # Oct 19, 2026
+    rf"(?i)\b\d{{1,2}}\s+{MONTHS}\s+\d{{4}}\b",  # 19 Oct 2026
+    r"\b\d{1,2}/\d{1,2}/\d{2,4}\b",  # 10/19/2026
+    r"\b\d{7,}\b",  # build ids, timestamps, counters
+]
+
+
+def strip_volatile(text: str) -> str:
+    """Drop dates and long digit runs (build ids, counters) so a page re-render does not flag.
+    Short numbers stay: a free limit changing from 50 to 20 must still flag."""
+    for pattern in DATE_PATTERNS:
+        text = re.sub(pattern, " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def openrouter_model_listed(model: str) -> bool:
+    data = json.loads(get("https://openrouter.ai/api/v1/models"))["data"]
+    return any(m.get("id") == model for m in data)
+
+
+def run(dry_run: bool, offline_pages: bool = False, flags_file: str | None = None) -> list[str]:
     now = dt.datetime.now(dt.timezone.utc)
     flags: list[str] = []
     print(f"stack check {now:%Y-%m-%d %H:%M}Z{' (dry run)' if dry_run else ''}\n")
@@ -145,6 +175,18 @@ def run(dry_run: bool, offline_pages: bool = False) -> list[str]:
         print(f"{repo:40} {pinned:16} {latest:16} {flag or ''}")
         if flag:
             flags.append(f"{repo}: {flag}")
+
+    print("\nmodels")
+    try:
+        if openrouter_model_listed(OPENROUTER_MODEL):
+            print(f"  listed         {OPENROUTER_MODEL} (OpenRouter)")
+        else:
+            flags.append(f"{OPENROUTER_MODEL}: no longer in OpenRouter's model list, pick a new free model")
+            print(f"  MISSING        {OPENROUTER_MODEL} (OpenRouter)")
+    except Exception as exc:
+        flags.append(f"{OPENROUTER_MODEL}: model list lookup failed: {exc}")
+    for model, url in MANUAL_MODEL_CHECKS.items():
+        print(f"  check by hand  {model}  {url}")
 
     if not offline_pages:
         old = json.loads(SNAPSHOT.read_text()) if SNAPSHOT.exists() else {}
@@ -171,6 +213,8 @@ def run(dry_run: bool, offline_pages: bool = False) -> list[str]:
     print(f"\n{len(flags)} flag(s)")
     for f in flags:
         print(f"  - {f}")
+    if flags_file:
+        Path(flags_file).write_text("".join(f"- {f}\n" for f in flags))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as fh:
@@ -182,8 +226,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dry-run", action="store_true", help="print only; do not save the page snapshot")
     ap.add_argument("--no-pages", action="store_true", help="skip the pricing pages")
+    ap.add_argument("--flags-file", help="write the flags as a markdown list here (empty when none)")
     args = ap.parse_args()
-    run(args.dry_run, offline_pages=args.no_pages)
+    run(args.dry_run, offline_pages=args.no_pages, flags_file=args.flags_file)
     return 0  # flags only: never fails the job
 
 

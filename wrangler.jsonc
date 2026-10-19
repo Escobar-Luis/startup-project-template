@@ -15,7 +15,8 @@
     "run_worker_first": ["/api/*", "/health"]
   },
   "ai": { "binding": "AI" },
-  // Per-visitor limit (AD-7). namespace_id is any account-unique integer string.
+  // Per-visitor limit (AD-7). The deploy job replaces 7001 with a per-Project id (hash of the repo name),
+  // so Projects on one account never share a counter.
   "ratelimits": [
     { "name": "VISITOR_LIMIT", "namespace_id": "7001", "simple": { "limit": 20, "period": 60 } }
   ],
@@ -23,6 +24,7 @@
     "DAILY_LLM_CAP": "200",
     "GIT_SHA": "dev"
   }
-  // Secrets (wrangler secret put, deploy job only): DATABASE_URL, GROQ_API_KEY, OPENROUTER_API_KEY.
+  // Secrets (deploy job only, shipped with the version via --secrets-file):
+  // DATABASE_URL, VISITOR_PEPPER, GROQ_API_KEY, OPENROUTER_API_KEY.
   // Optional var AI_GATEWAY_ID routes Workers AI through an AI Gateway for exact-match caching.
 }

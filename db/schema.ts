@@ -1,4 +1,4 @@
-// Drizzle schema. db/init.sql creates the same tables; tests/schema.test.ts keeps them in step.
+// Drizzle schema. db/init.sql creates the same tables; tests/repo.test.ts keeps them in step.
 import { integer, pgTable, serial, text, timestamp, date } from "drizzle-orm/pg-core";
 
 // Recorded example runs (AD-7 demo mode). Seeded from demo/runs.json at deploy.

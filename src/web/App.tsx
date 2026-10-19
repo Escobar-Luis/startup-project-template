@@ -33,8 +33,9 @@ export function App() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ prompt: text }),
       });
-      const body = await res.json();
-      if (!res.ok) setError(body.error ?? `error ${res.status}`);
+      const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
+      const body = isJson ? await res.json() : null;
+      if (!res.ok || !body) setError(body?.error ?? `error ${res.status}`);
       else setAnswer(body as Answer);
     } catch {
       setError("The app is waking up. Try again in a few seconds.");

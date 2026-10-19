@@ -1,7 +1,9 @@
-# Build then deploy one Project (AD-5). Heavy work runs here, never on the Mac.
-# build:  GitHub Environment "build"  holds only CLAUDE_CODE_OAUTH_TOKEN.
-# deploy: GitHub Environment "deploy" holds CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, NEON_API_KEY
-#         (+ optional NEON_ORG_ID, GROQ_API_KEY, OPENROUTER_API_KEY). The build agent never sees them.
+# Build, publish, then deploy one Project (AD-5). Heavy work runs here, never on the Mac.
+# build:   GitHub Environment "build" holds only CLAUDE_CODE_OAUTH_TOKEN. Read-only token: the agent cannot push.
+# publish: fresh runner the agent never touched. Refuses changes to protected paths, rebases on main,
+#          runs tests, build and gitleaks, then pushes.
+# deploy:  GitHub Environment "deploy" holds CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, NEON_API_KEY
+#          (+ optional NEON_ORG_ID, GROQ_API_KEY, OPENROUTER_API_KEY). The build agent never sees them.
 name: ship
 
 on:
@@ -33,6 +35,8 @@ permissions:
 env:
   GITLEAKS_VERSION: 8.30.1
   NODE_VERSION: "24"
+  # The build agent may not change these; publish fails if it does.
+  PROTECTED_PATHS: ".gitleaks.toml .gitleaksignore scripts/ .github/"
 
 jobs:
   build:
@@ -42,11 +46,12 @@ jobs:
     environment: build
     timeout-minutes: ${{ fromJSON(inputs.timeout_minutes || '60') }}
     permissions:
-      contents: write
+      contents: read   # the agent's token cannot push; publish pushes after its checks
       issues: read
       pull-requests: read
     outputs:
-      sha: ${{ steps.push.outputs.sha }}
+      start_sha: ${{ steps.start.outputs.sha }}
+      agent_sha: ${{ steps.bundle.outputs.sha }}
     steps:
       - name: Require CLAUDE_CODE_OAUTH_TOKEN
         if: github.event_name == 'workflow_dispatch'
@@ -58,11 +63,20 @@ jobs:
             exit 1
           fi
 
+      - name: Refuse dispatch from a branch other than main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::dispatch ship.yml from main (got ${GITHUB_REF}). Nothing was built or deployed."
+          exit 1
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          # The build agent gets no push credentials; only the push step below (after gitleaks) can push.
           persist-credentials: false
+
+      - name: Starting sha
+        id: start
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v7
         with:
@@ -95,19 +109,81 @@ jobs:
             git commit -m "chore: commit build output left uncommitted"
           fi
 
+      - name: Bundle the agent's commits
+        id: bundle
+        env:
+          START: ${{ steps.start.outputs.sha }}
+        run: |
+          head="$(git rev-parse HEAD)"
+          echo "sha=$head" >> "$GITHUB_OUTPUT"
+          if [ "$head" != "$START" ]; then git bundle create "$RUNNER_TEMP/agent.bundle" "$START..HEAD"; fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: agent-bundle
+          path: ${{ runner.temp }}/agent.bundle
+          if-no-files-found: ignore
+          retention-days: 3
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.push.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.build.outputs.start_sha }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v8
+        continue-on-error: true   # no artifact when the agent made no commits
+        with:
+          name: agent-bundle
+          path: ${{ runner.temp }}
+
+      - name: Take the agent's commits; refuse protected-path changes
+        env:
+          START: ${{ needs.build.outputs.start_sha }}
+          AGENT: ${{ needs.build.outputs.agent_sha }}
+        run: |
+          if [ "$AGENT" != "$START" ]; then
+            git fetch "$RUNNER_TEMP/agent.bundle" "$AGENT"
+            git checkout -q "$AGENT"
+            # shellcheck disable=SC2086
+            touched="$(git diff --name-only "$START" "$AGENT" -- $PROTECTED_PATHS)"
+            if [ -n "$touched" ]; then
+              echo "::error::the build agent changed protected paths; nothing was pushed:"
+              echo "$touched"
+              exit 1
+            fi
+          fi
+
+      - name: Rebase on origin/main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch -q origin main
+          git rebase origin/main
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
       - run: npm test
       - run: npm run build
       - run: npm run build:worker
 
       - name: gitleaks (before any push)
         run: |
-          curl -sSfL -o gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -sSfL -o checksums.txt "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-          grep " gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz$" checksums.txt | awk '{print $1"  gitleaks.tgz"}' | sha256sum -c -
-          tar -xzf gitleaks.tgz gitleaks && rm gitleaks.tgz checksums.txt
-          ./gitleaks git --config .gitleaks.toml --redact --exit-code 1 .
-          ./gitleaks dir --config .gitleaks.toml --redact --exit-code 1 dist
-          rm gitleaks
+          GITLEAKS="$(scripts/install-gitleaks.sh)"
+          "$GITLEAKS" git --config .gitleaks.toml --redact --exit-code 1 .
+          "$GITLEAKS" dir --config .gitleaks.toml --redact --exit-code 1 dist
 
       - name: Push
         id: push
@@ -120,7 +196,7 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   deploy:
-    needs: build
+    needs: publish
     # The template repo itself only builds and tests; Projects made from it deploy.
     if: github.event.repository.is_template != true
     runs-on: ubuntu-latest
@@ -128,6 +204,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write   # gh-pages branch
+      pages: read       # Pages status check
     steps:
       - name: Require deploy secrets
         env:
@@ -146,7 +223,8 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.build.outputs.sha }}
+          ref: ${{ needs.publish.outputs.sha }}
+          fetch-depth: 0   # check-review compares the reviewed sha with this build
 
       - uses: actions/setup-node@v7
         with:
@@ -155,67 +233,127 @@ jobs:
 
       - run: npm ci
 
-      - name: Gate on open high review findings
-        run: node scripts/check-review.mjs review/code-review.md
+      # Gates first: nothing in Neon or Cloudflare changes until all of them pass.
+      - name: Gate on the review of this build
+        run: node scripts/check-review.mjs review/code-review.md "${{ needs.publish.outputs.sha }}"
 
-      - name: Provision Neon (project, schema, RLS, app role, demo runs)
-        id: neon
+      - name: Gate on template placeholders
+        run: node scripts/check-placeholders.mjs
+
+      - name: Gate on GitHub Pages being enabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh api "repos/${GITHUB_REPOSITORY}/pages" --jq .source.branch >/dev/null 2>&1; then
+            echo "::error::Pages not enabled: the build step (story 3.9) enables it with \`gh api\` from the Mac"
+            exit 1
+          fi
+
+      - name: Neon project (find or create)
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_ORG_ID: ${{ secrets.NEON_ORG_ID }}
           NEON_PROJECT_NAME: ${{ github.event.repository.name }}
           OUT_DIR: ${{ runner.temp }}
-        run: node scripts/provision-neon.mjs
+        run: node scripts/provision-neon.mjs connect
 
       - name: Gate on database size (200 MB)
         env:
           NEON_OWNER_URL_FILE: ${{ runner.temp }}/neon-owner-url
         run: node scripts/db-size.mjs
 
+      - name: Which Worker secrets exist already
+        id: existing
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER: ${{ github.event.repository.name }}
+        run: |
+          # A Worker that does not exist yet has no secrets.
+          names="$(npx wrangler secret list --name "$WORKER" --format json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).map(x=>x.name).join(" "))}catch{console.log("")}})')"
+          echo "names=$names" >> "$GITHUB_OUTPUT"
+          echo "existing Worker secrets: ${names:-none}"
+
+      - name: Neon schema, RLS, app role, demo runs
+        env:
+          OUT_DIR: ${{ runner.temp }}
+          # Set a new app password only when the Worker has no DATABASE_URL to keep.
+          ROTATE_APP_PASSWORD: ${{ contains(format(' {0} ', steps.existing.outputs.names), ' DATABASE_URL ') && '0' || '1' }}
+        run: node scripts/provision-neon.mjs apply
+
       - run: npm run build
 
-      - name: Deploy Worker
+      - name: gitleaks on the rebuilt dist
+        run: |
+          GITLEAKS="$(scripts/install-gitleaks.sh)"
+          "$GITLEAKS" dir --config .gitleaks.toml --redact --exit-code 1 dist
+
+      - name: Per-Project rate-limit namespace
+        env:
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          ns="$(node -e 'const h=require("crypto").createHash("sha256").update(process.env.REPO).digest();console.log(1000+(h.readUInt32BE(0)%2000000000))')"
+          sed -i "s/\"namespace_id\": \"7001\"/\"namespace_id\": \"$ns\"/" wrangler.jsonc
+          grep -q "\"namespace_id\": \"$ns\"" wrangler.jsonc || { echo "::error::could not set namespace_id"; exit 1; }
+          echo "rate-limit namespace $ns"
+
+      - name: Secrets file for the deploy
+        env:
+          NAMES: ${{ steps.existing.outputs.names }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          # Secrets ship with the Worker version itself (wrangler deploy --secrets-file), so the Worker never
+          # runs without them. Source: `wrangler deploy --help` (4.151.2): "--secrets-file  Path to a file
+          # containing secrets to upload with the version (JSON or .env format). Applies additively with
+          # secrets from previous deployments - omitted secrets will not be deleted."
+          # https://developers.cloudflare.com/workers/wrangler/commands/#deploy
+          node -e '
+            const fs = require("fs"), crypto = require("crypto");
+            const names = new Set((process.env.NAMES || "").split(" ").filter(Boolean));
+            const out = {};
+            const app = process.env.RUNNER_TEMP + "/neon-app-url";
+            if (fs.existsSync(app)) out.DATABASE_URL = fs.readFileSync(app, "utf8").trim();
+            if (!names.has("VISITOR_PEPPER")) out.VISITOR_PEPPER = crypto.randomBytes(32).toString("hex");
+            for (const k of ["GROQ_API_KEY", "OPENROUTER_API_KEY"]) if (process.env[k]) out[k] = process.env[k];
+            for (const v of Object.values(out)) console.log("::add-mask::" + v);
+            if (!out.DATABASE_URL && !names.has("DATABASE_URL")) { console.log("::error::no DATABASE_URL to give the Worker"); process.exit(1); }
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/worker-secrets.json", JSON.stringify(out), { mode: 0o600 });
+            console.log("secrets in this version: " + (Object.keys(out).join(", ") || "none (all kept)"));
+          '
+
+      - name: Deploy Worker with its secrets
         id: wrangler
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4.151.2"
-          command: deploy --name ${{ github.event.repository.name }} --var GIT_SHA:${{ needs.build.outputs.sha }}
+          command: deploy --name ${{ github.event.repository.name }} --var GIT_SHA:${{ needs.publish.outputs.sha }} --secrets-file ${{ runner.temp }}/worker-secrets.json
 
-      - name: Worker secrets
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          WORKER: ${{ github.event.repository.name }}
-        run: |
-          npx wrangler secret put DATABASE_URL --name "$WORKER" < "$RUNNER_TEMP/neon-app-url"
-          for k in GROQ_API_KEY OPENROUTER_API_KEY; do
-            # A missing key is skipped; llm() then skips that provider.
-            if [ -n "${!k}" ]; then printf '%s' "${!k}" | npx wrangler secret put "$k" --name "$WORKER"; fi
-          done
-          rm -f "$RUNNER_TEMP/neon-app-url" "$RUNNER_TEMP/neon-owner-url"
+      - name: Remove secret files
+        if: always()
+        run: rm -f "$RUNNER_TEMP/worker-secrets.json" "$RUNNER_TEMP/neon-app-url" "$RUNNER_TEMP/neon-owner-url"
 
-      - name: Smoke-check /health on the live Worker
+      - name: Smoke-check /health on the live Worker (db must be true)
         env:
           LIVE_URL: ${{ steps.wrangler.outputs.deployment-url }}
         run: |
+          if [ -z "$LIVE_URL" ]; then echo "::error::wrangler reported no deployment URL"; exit 1; fi
           for i in 1 2 3 4 5; do
-            if curl -sSf --max-time 15 "$LIVE_URL/health"; then echo; exit 0; fi
-            sleep 5
+            body="$(curl -sSf --max-time 15 "$LIVE_URL/health" || true)"
+            if [ -n "$body" ] && echo "$body" | jq -e '.db == true' >/dev/null 2>&1; then echo "$body"; exit 0; fi
+            sleep 6
           done
-          echo "::error::$LIVE_URL/health did not answer 200"
+          echo "::error::$LIVE_URL/health did not report db:true (last: ${body:-no answer})"
           exit 1
 
       - name: Write deployed.json and publish Pages
         env:
           LIVE_URL: ${{ steps.wrangler.outputs.deployment-url }}
-          SHA: ${{ needs.build.outputs.sha }}
+          SHA: ${{ needs.publish.outputs.sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -z "$LIVE_URL" ]; then echo "::error::wrangler reported no deployment URL"; exit 1; fi
           mkdir -p _site
           node -e 'const fs=require("fs");fs.writeFileSync("_site/deployed.json",JSON.stringify({sha:process.env.SHA,live_url:process.env.LIVE_URL,deployed_at:new Date().toISOString()},null,2)+"\n")'
           cp pages/index.html project.json _site/
@@ -232,5 +370,3 @@ jobs:
           git add -A
           git commit -qm "deploy ${SHA}"
           git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
-          # First deploy: point Pages at gh-pages. Needs admin; the startup-run build step also does this.
-          gh api -X POST "repos/${GITHUB_REPOSITORY}/pages" -f "source[branch]=gh-pages" -f "source[path]=/" >/dev/null 2>&1 || true

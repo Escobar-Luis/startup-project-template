@@ -3,7 +3,7 @@
 // public/explainer.json (nodes, edges, tour) and project.json (repo link, color). No LLM, no voice: captions
 // carry the story with the sound off. It follows the architecture-explainer-video shape: name the thing,
 // pull out to the whole system, zoom one station at a time in tour order (others blur), then an end card.
-//   node scripts/build-clip.mjs <out dir>      then, in CI only: npx hyperframes render (ship.yml render-clip)
+//   node scripts/build-clip.mjs <out dir>      then, in CI only: npx hyperframes render (ship.yml render-clip pins the version)
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,7 +11,6 @@ import { escapeHtml, explainerProblems } from "./build-explainer.mjs";
 
 const r2 = (n) => Math.round(n * 1000) / 1000;
 
-export const HYPERFRAMES_VERSION = "0.8.154";
 const W = 1920;
 const H = 1080;
 const CARD_W = 360;

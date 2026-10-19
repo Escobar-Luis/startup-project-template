@@ -101,6 +101,34 @@ jobs:
             --max-turns ${{ inputs.max_turns }}
             --disallowedTools "Bash(git push:*)"
 
+      # AD-13: the explainer is made last, from the code as built, by our project-explainer skill. It may change
+      # only public/explainer.json and public/explainer.html after the review (scripts/check-review.mjs).
+      - name: Explainer agent (project-explainer skill)
+        id: explainer
+        if: github.event_name == 'workflow_dispatch'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: >-
+            Run the project-explainer skill (.claude/skills/project-explainer/SKILL.md) on this repo as it is now.
+            Write public/explainer.json from the code, with the tour in talk-track order, run npm run build until it
+            passes, then commit only public/explainer.json and public/explainer.html. Change no other file. Do not push.
+          claude_args: >-
+            --max-turns 30
+            --disallowedTools "Bash(git push:*)"
+
+      - name: Record the explainer's tokens
+        if: github.event_name == 'workflow_dispatch' && steps.explainer.outputs.execution_file != ''
+        env:
+          EXECUTION_FILE: ${{ steps.explainer.outputs.execution_file }}
+        run: |
+          node scripts/explainer-usage.mjs "$EXECUTION_FILE" review/explainer-usage.json "$(git rev-parse HEAD)"
+          if [ -f review/explainer-usage.json ]; then
+            git add review/explainer-usage.json
+            git commit -qm "chore: record explainer tokens" || true
+          fi
+
       - name: Commit anything the agent left uncommitted
         run: |
           if [ -n "$(git status --porcelain)" ]; then
@@ -195,10 +223,76 @@ jobs:
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-  deploy:
+  render-clip:
+    # Best effort (AD-13): renders the ~30 s how-it-works clip from public/explainer.json and project.json only,
+    # in a headless Chrome on this runner, never on the Mac. Any failure ends in "clip: skipped (<reason>)" in the
+    # job summary and no mp4; deploy runs either way and includes the clip only when one was made.
     needs: publish
-    # The template repo itself only builds and tests; Projects made from it deploy.
-    if: github.event.repository.is_template != true
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      HYPERFRAMES_VERSION: "0.8.154"
+      HYPERFRAMES_NO_TELEMETRY: "1"
+      HYPERFRAMES_NO_UPDATE_CHECK: "1"
+    outputs:
+      rendered: ${{ steps.render.outputs.rendered }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.publish.outputs.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Render the clip, or skip with a reason
+        id: render
+        run: |
+          out="$RUNNER_TEMP/clip"
+          mp4="$RUNNER_TEMP/how-it-works.mp4"
+          logs="$RUNNER_TEMP/clip-logs"
+          mkdir -p "$logs"
+          echo "rendered=false" >> "$GITHUB_OUTPUT"
+          skip() {
+            for f in "$logs"/*.log; do [ -f "$f" ] && { echo "--- $f"; tail -n 40 "$f"; }; done
+            echo "clip: skipped ($1)" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+          hf() { npx --yes "hyperframes@${HYPERFRAMES_VERSION}" "$@"; }
+          node scripts/build-clip.mjs "$out" > "$logs/build-clip.log" 2>&1 || skip "build-clip could not use public/explainer.json"
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg; } > "$logs/ffmpeg.log" 2>&1 \
+              || skip "ffmpeg could not be installed"
+          fi
+          cd "$out"
+          hf browser ensure > "$logs/browser.log" 2>&1 || skip "HyperFrames could not get a headless Chrome"
+          hf check > "$logs/check.log" 2>&1 || skip "hyperframes check failed"
+          timeout 15m npx --yes "hyperframes@${HYPERFRAMES_VERSION}" render --workers 1 --output "$mp4" > "$logs/render.log" 2>&1 \
+            || skip "hyperframes render failed or ran past 15 minutes"
+          [ -s "$mp4" ] || skip "render wrote no file"
+          bytes="$(stat -c %s "$mp4")"
+          # Workers static assets cap one file at 25 MiB.
+          [ "$bytes" -le 26214400 ] || skip "clip is $bytes bytes, over the 25 MiB static-asset cap"
+          sed -n '1,3p' "$logs/render.log"
+          echo "clip: rendered ($bytes bytes)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "rendered=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        if: steps.render.outputs.rendered == 'true'
+        with:
+          name: how-it-works
+          path: ${{ runner.temp }}/how-it-works.mp4
+          retention-days: 7
+
+  deploy:
+    needs: [publish, render-clip]
+    # Runs whatever render-clip did (the clip never blocks deploy). The template repo itself only builds and
+    # tests; Projects made from it deploy.
+    if: ${{ !cancelled() && needs.publish.result == 'success' && github.event.repository.is_template != true }}
     runs-on: ubuntu-latest
     environment: deploy
     timeout-minutes: 20
@@ -225,6 +319,14 @@ jobs:
         with:
           ref: ${{ needs.publish.outputs.sha }}
           fetch-depth: 0   # check-review compares the reviewed sha with this build
+
+      - name: Take the how-it-works clip when render-clip made one
+        if: needs.render-clip.outputs.rendered == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: how-it-works
+          path: public
 
       - uses: actions/setup-node@v7
         with:

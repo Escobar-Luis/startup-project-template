@@ -3,6 +3,8 @@ import project from "../../project.json";
 export interface ProjectInfo {
   startup: { name: string; domain: string };
   title: string;
+  /** https://github.com/<owner>/<repo>: the explainer links files there. */
+  repo?: string;
   problem: string;
   colors: { primary: string; accent: string; background: string; text: string };
   examples_title?: string;

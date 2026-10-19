@@ -491,12 +491,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p _site
-          node -e 'const fs=require("fs");fs.writeFileSync("_site/deployed.json",JSON.stringify({sha:process.env.SHA,live_url:process.env.LIVE_URL,deployed_at:new Date().toISOString()},null,2)+"\n")'
           cp pages/index.html project.json _site/
           cp demo/runs.json _site/demo-runs.json
           for f in public/explainer.html public/how-it-works.mp4; do
             if [ -f "$f" ]; then cp "$f" _site/; fi
           done
+          # clip_url only when the clip ships in _site (ai-engineering-journey story 3.11 reads it)
+          PAGES_URL="$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq .html_url 2>/dev/null || true)"
+          if [ -z "$PAGES_URL" ]; then
+            owner="${GITHUB_REPOSITORY%%/*}"; PAGES_URL="https://${owner,,}.github.io/${GITHUB_REPOSITORY#*/}/"
+          fi
+          export PAGES_URL
+          node -e 'const fs=require("fs");const d={sha:process.env.SHA,live_url:process.env.LIVE_URL,deployed_at:new Date().toISOString()};if(fs.existsSync("_site/how-it-works.mp4"))d.clip_url=process.env.PAGES_URL.replace(/\/+$/,"")+"/how-it-works.mp4";fs.writeFileSync("_site/deployed.json",JSON.stringify(d,null,2)+"\n")'
           touch _site/.nojekyll
           cat _site/deployed.json
           cd _site

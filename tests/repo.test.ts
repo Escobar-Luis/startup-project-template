@@ -122,6 +122,17 @@ describe("explainer and clip in ship.yml (AD-13, story 3.8)", () => {
     expect(deploy).toContain("for f in public/explainer.html public/how-it-works.mp4");
   });
 
+  it("deployed.json names the clip only when it ships in _site", () => {
+    const step = deploy.slice(deploy.indexOf("- name: Write deployed.json and publish Pages"));
+    const copy = step.indexOf("for f in public/explainer.html public/how-it-works.mp4");
+    const write = step.indexOf('fs.writeFileSync("_site/deployed.json"');
+    expect(copy).toBeGreaterThan(0);
+    expect(write).toBeGreaterThan(copy);
+    expect(step).toContain('if(fs.existsSync("_site/how-it-works.mp4"))d.clip_url=');
+    expect(step).toContain('+"/how-it-works.mp4"');
+    expect(step).toContain('gh api "repos/${GITHUB_REPOSITORY}/pages" --jq .html_url');
+  });
+
   it("an explainer failure keeps the build agent's work, and only the explainer's files survive it", () => {
     const step = build.slice(build.indexOf("- name: Explainer agent"), build.indexOf("- name: Keep only the explainer's files"));
     expect(step).toContain("continue-on-error: true");

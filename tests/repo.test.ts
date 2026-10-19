@@ -21,7 +21,7 @@ describe("ship.yml (AD-5)", () => {
   it("build job: env build, claude-code-action with OAuth token and max turns, timeout, gitleaks before push", () => {
     const build = yml.slice(yml.indexOf("\n  build:"), yml.indexOf("\n  deploy:"));
     expect(build).toContain("environment: build");
-    expect(build).toMatch(/timeout-minutes: \$\{\{ inputs\.timeout_minutes/);
+    expect(build).toContain("timeout-minutes: ${{ fromJSON(inputs.timeout_minutes || '60') }}");
     expect(build).toContain("uses: anthropics/claude-code-action@v1");
     expect(build).toContain("claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}");
     expect(build).toContain("--max-turns ${{ inputs.max_turns }}");

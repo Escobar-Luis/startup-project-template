@@ -102,9 +102,12 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
           prompt: ${{ inputs.prompt || format('Read AGENTS.md and follow it. Build this Project end to end, set repo in project.json to https://github.com/{0}, run npm test and npm run build until both pass, write review/code-review.md, and commit your work with conventional commit messages. Do not push.', github.repository) }}
+          # claude-code-action allows no edits or Bash by default (the first smoke run, 2026-10-20, was denied 8
+          # times and built nothing). The token is read-only, publish does the push, and gh/curl stay denied.
           claude_args: >-
             --max-turns ${{ inputs.max_turns }}
-            --disallowedTools "Bash(git push:*)"
+            --allowedTools "Read,Write,Edit,MultiEdit,Glob,Grep,LS,Bash,WebFetch,WebSearch,TodoWrite"
+            --disallowedTools "Bash(git push:*),Bash(gh:*),Bash(curl:*),Bash(wget:*)"
 
       - name: Commit anything the agent left uncommitted
         if: always()
@@ -138,7 +141,8 @@ jobs:
             public/explainer.html and discards every other change. Do not edit project.json. Do not commit or push.
           claude_args: >-
             --max-turns 30
-            --disallowedTools "Bash(git push:*)"
+            --allowedTools "Read,Write,Edit,MultiEdit,Glob,Grep,LS,Bash,TodoWrite"
+            --disallowedTools "Bash(git push:*),Bash(gh:*),Bash(curl:*),Bash(wget:*)"
 
       - name: Keep only the explainer's files
         if: always() && github.event_name == 'workflow_dispatch'
@@ -149,7 +153,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git reset -q --soft "$PRE"
           git reset -q
-          git add -A -- public/explainer.json public/explainer.html review/
+          keep=""; for f in public/explainer.json public/explainer.html review; do [ -e "$f" ] && keep="$keep $f"; done
+          if [ -n "$keep" ]; then git add -A -- $keep; fi
           dropped="$(git status --porcelain --untracked-files=all | grep -v '^[AM] ' || true)"
           if [ -n "$dropped" ]; then echo "::warning::discarding explainer changes outside its files:"; echo "$dropped"; fi
           git checkout -q -- .

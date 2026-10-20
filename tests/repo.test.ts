@@ -120,7 +120,8 @@ describe("explainer and clip in ship.yml (AD-13, story 3.8)", () => {
     expect(usage).toBeGreaterThan(explainer);
     expect(bundle).toBeGreaterThan(usage);
     expect(build.slice(explainer, usage)).toContain(".claude/skills/project-explainer/SKILL.md");
-    expect(build.slice(explainer, usage)).toContain('--disallowedTools "Bash(git push:*)"');
+    expect(build.slice(explainer, usage)).toContain('--disallowedTools "Bash(git push:*),Bash(gh:*),Bash(curl:*),Bash(wget:*)"');
+    expect(build.slice(explainer, usage)).toContain('--allowedTools "Read,Write,Edit');
     expect(build).toContain("review/explainer-usage.json");
   });
 
@@ -160,7 +161,7 @@ describe("explainer and clip in ship.yml (AD-13, story 3.8)", () => {
     expect(step).toContain("continue-on-error: true");
     const keep = build.slice(build.indexOf("- name: Keep only the explainer's files"), build.indexOf("- name: Record the explainer's tokens"));
     expect(keep).toContain('git reset -q --soft "$PRE"');
-    expect(keep).toContain("git add -A -- public/explainer.json public/explainer.html review/");
+    expect(keep).toContain("for f in public/explainer.json public/explainer.html review; do [ -e \"$f\" ]");
     expect(keep).toContain("git clean -fdq");
     expect(build.indexOf("- name: Commit anything the agent left uncommitted")).toBeLessThan(build.indexOf("- name: Explainer agent"));
     for (const name of ["Record the explainer's tokens", "Bundle the agent's commits", "Keep only the explainer's files"]) {

@@ -36,7 +36,11 @@ Swapping a layer in a Project needs a `stack_note` in that Project's README sayi
 
 `src/worker/llm.ts`, in order:
 
-1. Per-visitor rate limit (Workers Rate Limiting binding `VISITOR_LIMIT`, 20 per 60 s). Over it: HTTP 429 `{"error":"slow down"}`.
+1. Per-visitor rate limit, two checks, both fail open (a database or binding error lets the call through; step 2 still caps spend).
+   Over either: HTTP 429 `{"error":"slow down"}`.
+   1. Workers Rate Limiting binding `VISITOR_LIMIT` (20 per 60 s). Kept, but it did not enforce on Workers Free (see below).
+   2. Neon `visitor_hits`: one guarded upsert per call on (HMAC visitor key, 1-minute window), limit
+      `VISITOR_LIMIT_PER_MIN` (default 20). This is the real guard. About 1% of calls also delete windows older than an hour.
 2. Per-Project daily counter in Neon (`llm_usage`, cap `DAILY_LLM_CAP`, default 200). At the cap: demo mode, no provider is called.
 3. Workers AI `@cf/google/gemma-4-26b-a4b-it` (binding `AI`; optional `AI_GATEWAY_ID` adds AI Gateway exact-match caching).
 4. Groq `openai/gpt-oss-120b` (`GROQ_API_KEY`).
@@ -60,6 +64,7 @@ Cerebras (card), GitHub Models (retired 2026-07-30).
 | Neon Free: 100 projects, 1 GB each, 20 GB total | deploy fails over 200 MB per Project |
 | Neon Free: 100 compute-hours per project per month, scale to zero after 5 min idle | `/health` caches the database status 30 s per isolate, so polling it does not keep compute awake |
 | Langfuse Hobby: 50k units/month | sample Project traces first |
+| Workers Rate Limiting binding on Free: did not enforce; 30 concurrent POSTs to `/api/ask` from one IP all got 200 (2026-10-20, https://epic3-smoke-test.lae311.workers.dev) | per-visitor limit enforced in Neon (`visitor_hits`, `VISITOR_LIMIT_PER_MIN`, default 20/min) |
 | GitHub Actions and Pages | free for public repos |
 
 ## Allowed swaps (with a `stack_note`)

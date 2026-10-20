@@ -202,6 +202,15 @@ describe("database (AD-6)", () => {
     expect(read("scripts/provision-neon.mjs")).toContain("NOBYPASSRLS");
   });
 
+  it("visitor_hits: RLS keyed on app.visitor, deletes only hour-old windows", () => {
+    expect(rls).toContain("ALTER TABLE visitor_hits ENABLE ROW LEVEL SECURITY");
+    expect(rls).toContain("ALTER TABLE visitor_hits FORCE ROW LEVEL SECURITY");
+    expect(rls).toMatch(/visitor_hits_insert_own ON visitor_hits FOR INSERT TO app\s+WITH CHECK \(visitor = current_setting\('app.visitor', true\)\)/);
+    expect(rls).toMatch(/visitor_hits_delete_old ON visitor_hits FOR DELETE TO app\s+USING \(window_start < now\(\) - interval '1 hour'\)/);
+    expect(rls).toContain("GRANT SELECT, INSERT, UPDATE, DELETE ON visitor_hits TO app");
+    expect(init).toContain("PRIMARY KEY (visitor, window_start)");
+  });
+
   it("tables the build agent adds are reachable by the app role", () => {
     expect(rls).toContain("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE ON TABLES TO app");
     expect(rls).toContain("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO app");

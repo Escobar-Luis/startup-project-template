@@ -13,6 +13,8 @@ export interface Env {
   /** Per-Project secret for HMAC visitor keys; the deploy job generates it once. */
   VISITOR_PEPPER?: string;
   DAILY_LLM_CAP?: string;
+  /** Per-visitor LLM calls per minute, enforced in Neon (visitor_hits); default 20. */
+  VISITOR_LIMIT_PER_MIN?: string;
   GIT_SHA?: string;
   /** owner/repo, set by the deploy job (`--var PROJECT_REPO`): Langfuse tags each LLM call `project:<repo>`. */
   PROJECT_REPO?: string;

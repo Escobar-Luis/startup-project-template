@@ -22,6 +22,7 @@
   ],
   "vars": {
     "DAILY_LLM_CAP": "200",
+    "VISITOR_LIMIT_PER_MIN": "20",
     "GIT_SHA": "dev"
   }
   // Secrets (deploy job only, shipped with the version via --secrets-file):

@@ -81,6 +81,28 @@ describe("ship.yml (AD-5)", () => {
   });
 });
 
+describe("redeploy_only in ship.yml (ai-engineering-journey story 3.16 revive)", () => {
+  const yml = read(".github/workflows/ship.yml");
+  const job = (name: string, next?: string) => yml.slice(yml.indexOf(`\n  ${name}:`), next ? yml.indexOf(`\n  ${next}:`) : undefined);
+  const build = job("build", "publish");
+  const deploy = job("deploy");
+
+  it("is a boolean dispatch input, off by default", () => {
+    expect(yml).toMatch(/      redeploy_only:\n        description: [^\n]+\n        type: boolean\n        default: false/);
+  });
+
+  it("skips the build agent and publish; deploy runs on the dispatched main sha with every gate", () => {
+    expect(build).toContain("github.event_name == 'workflow_dispatch' && inputs.redeploy_only != true");
+    expect(deploy).toContain("inputs.redeploy_only == true && needs.publish.result == 'skipped'");
+    expect(deploy).toContain("DEPLOY_SHA: ${{ needs.publish.outputs.sha || github.sha }}");
+    expect(deploy).toContain("inputs.redeploy_only == true && github.ref != 'refs/heads/main'");
+    expect(deploy).not.toContain("needs.publish.outputs.sha }}\"");
+    expect(deploy).toContain('scripts/check-review.mjs review/code-review.md "$DEPLOY_SHA"');
+    expect(deploy).toContain("--var GIT_SHA:${{ env.DEPLOY_SHA }}");
+    expect(deploy).toContain("git show origin/gh-pages:how-it-works.mp4 > public/how-it-works.mp4");
+  });
+});
+
 describe("explainer and clip in ship.yml (AD-13, story 3.8)", () => {
   const yml = read(".github/workflows/ship.yml");
   const job = (name: string, next?: string) => yml.slice(yml.indexOf(`\n  ${name}:`), next ? yml.indexOf(`\n  ${next}:`) : undefined);

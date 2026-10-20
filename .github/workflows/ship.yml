@@ -21,6 +21,10 @@ on:
         description: "Build prompt (empty: follow AGENTS.md)"
         type: string
         default: ""
+      redeploy_only:
+        description: "Redeploy main as it is: no build agent, no publish (ai-engineering-journey story 3.16 revive)"
+        type: boolean
+        default: false
   push:
     branches: [main]
 # Never pull_request_target: a fork must never reach these secrets.
@@ -40,8 +44,9 @@ env:
 
 jobs:
   build:
-    # Pushes count only from the repo owner; dispatch already needs write access.
-    if: github.event_name == 'workflow_dispatch' || github.actor == github.repository_owner
+    # Pushes count only from the repo owner; dispatch already needs write access. A redeploy_only dispatch skips
+    # build and publish (and so render-clip); deploy then runs on the dispatched main sha.
+    if: (github.event_name == 'workflow_dispatch' && inputs.redeploy_only != true) || (github.event_name == 'push' && github.actor == github.repository_owner)
     runs-on: ubuntu-latest
     environment: build
     timeout-minutes: ${{ fromJSON(inputs.timeout_minutes || '60') }}
@@ -325,15 +330,23 @@ jobs:
   deploy:
     needs: [publish, render-clip]
     # Runs whatever render-clip did (the clip never blocks deploy). The template repo itself only builds and
-    # tests; Projects made from it deploy.
-    if: ${{ !cancelled() && needs.publish.result == 'success' && github.event.repository.is_template != true }}
+    # tests; Projects made from it deploy. redeploy_only: publish was skipped on purpose; deploy main's sha as it is.
+    if: ${{ !cancelled() && needs.publish.result == 'success' && github.event.repository.is_template != true || !cancelled() && inputs.redeploy_only == true && needs.publish.result == 'skipped' && github.event.repository.is_template != true }}
     runs-on: ubuntu-latest
     environment: deploy
     timeout-minutes: 20
     permissions:
       contents: write   # gh-pages branch
       pages: read       # Pages status check
+    env:
+      DEPLOY_SHA: ${{ needs.publish.outputs.sha || github.sha }}
     steps:
+      - name: Refuse a redeploy from a branch other than main
+        if: inputs.redeploy_only == true && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::dispatch ship.yml from main (got ${GITHUB_REF}). Nothing was deployed."
+          exit 1
+
       - name: Require deploy secrets
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -351,7 +364,7 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.publish.outputs.sha }}
+          ref: ${{ env.DEPLOY_SHA }}
           fetch-depth: 0   # check-review compares the reviewed sha with this build
 
       - name: Take the how-it-works clip when render-clip made one
@@ -362,6 +375,15 @@ jobs:
           name: how-it-works
           path: public
 
+      - name: Keep the published clip (redeploy only)
+        if: inputs.redeploy_only == true
+        run: |
+          # No render-clip on a redeploy: reuse the clip the last deploy put on gh-pages, if any.
+          if git cat-file -e origin/gh-pages:how-it-works.mp4 2>/dev/null; then
+            git show origin/gh-pages:how-it-works.mp4 > public/how-it-works.mp4
+            echo "clip: kept from gh-pages"
+          fi
+
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -371,7 +393,7 @@ jobs:
 
       # Gates first: nothing in Neon or Cloudflare changes until all of them pass.
       - name: Gate on the review of this build
-        run: node scripts/check-review.mjs review/code-review.md "${{ needs.publish.outputs.sha }}"
+        run: node scripts/check-review.mjs review/code-review.md "$DEPLOY_SHA"
 
       - name: Gate on template placeholders
         run: node scripts/check-placeholders.mjs
@@ -465,7 +487,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4.151.2"
-          command: deploy --name ${{ github.event.repository.name }} --var GIT_SHA:${{ needs.publish.outputs.sha }} --secrets-file ${{ runner.temp }}/worker-secrets.json
+          command: deploy --name ${{ github.event.repository.name }} --var GIT_SHA:${{ env.DEPLOY_SHA }} --secrets-file ${{ runner.temp }}/worker-secrets.json
 
       - name: Remove secret files
         if: always()
@@ -487,7 +509,7 @@ jobs:
       - name: Write deployed.json and publish Pages
         env:
           LIVE_URL: ${{ steps.wrangler.outputs.deployment-url }}
-          SHA: ${{ needs.publish.outputs.sha }}
+          SHA: ${{ env.DEPLOY_SHA }}
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p _site

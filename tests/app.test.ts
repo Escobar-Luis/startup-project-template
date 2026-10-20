@@ -43,6 +43,18 @@ describe("routes", () => {
     expect(await res.json()).toEqual({ error: "slow down" });
   });
 
+  it("visitor over the Neon limit (binding allows): HTTP 429 {error: 'slow down'}", async () => {
+    const store = fakeStore();
+    const app = createApp({ store: () => store });
+    const e = env({ AI: fakeAI("ok"), VISITOR_LIMIT: allowAll, VISITOR_LIMIT_PER_MIN: "2" });
+    expect((await post(app, e, { prompt: "hi" })).status).toBe(200);
+    expect((await post(app, e, { prompt: "hi" })).status).toBe(200);
+    const res = await post(app, e, { prompt: "hi" });
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ error: "slow down" });
+    expect(store.saved).toHaveLength(2);
+  });
+
   it("POST /api/ask answers live and saves the visitor's submission under a hashed key", async () => {
     const store = fakeStore();
     const app = createApp({ store: () => store });

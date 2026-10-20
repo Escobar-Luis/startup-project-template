@@ -8,13 +8,30 @@ export const DEMO_ROWS: DemoRow[] = [
   { input: "Classify this lead by company size", output: "Recorded: lead class", model: "@cf/google/gemma-4-26b-a4b-it" },
 ];
 
-export function fakeStore(opts: { calls?: number; rows?: DemoRow[]; dbUp?: boolean } = {}) {
+export function fakeStore(opts: { calls?: number; rows?: DemoRow[]; dbUp?: boolean; hitsDown?: boolean } = {}) {
   const usage = new Map<string, number>();
+  /** visitor -> hits in the current window (the fake has one window). */
+  const hits = new Map<string, number>();
+  let prunes = 0;
   const saved: { visitor: string; input: string; source: string }[] = [];
   let preset = opts.calls;
-  const store: Store & { usage: Map<string, number>; saved: typeof saved } = {
+  const store: Store & { usage: Map<string, number>; saved: typeof saved; hits: Map<string, number>; prunes: () => number } = {
     usage,
     saved,
+    hits,
+    prunes: () => prunes,
+    async hitVisitor(visitor, limit) {
+      if (opts.dbUp === false || opts.hitsDown) throw new Error("db down");
+      const n = hits.get(visitor) ?? 0;
+      if (limit <= 0 || n >= limit) return false;
+      hits.set(visitor, n + 1);
+      return true;
+    },
+    async pruneVisitorHits() {
+      if (opts.dbUp === false || opts.hitsDown) throw new Error("db down");
+      prunes++;
+      return 0;
+    },
     async reserveCall(day, cap) {
       if (preset !== undefined) {
         usage.set(day, preset);

@@ -18,3 +18,9 @@ CREATE TABLE IF NOT EXISTS submissions (
   source text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS visitor_hits (
+  visitor text NOT NULL,
+  window_start timestamptz NOT NULL,
+  hits integer NOT NULL DEFAULT 0,
+  PRIMARY KEY (visitor, window_start)
+);

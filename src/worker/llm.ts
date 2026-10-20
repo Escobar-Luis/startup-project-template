@@ -5,7 +5,7 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import recordedRuns from "../../demo/runs.json";
 import type { DemoRow, Store } from "./db";
 import type { Env } from "./env";
-import { visitorAllowed } from "./ratelimit";
+import { neonVisitorAllowed, visitorAllowed } from "./ratelimit";
 import { sendGenerations, type Generation } from "./trace";
 
 export const DEMO_BANNER = "Live AI quota reached, showing a recorded run";
@@ -56,8 +56,11 @@ export interface LlmContext {
   demoRuns?: DemoRow[];
   /** Test seam for HTTP providers (Groq, OpenRouter) and the Langfuse export. */
   fetch?: typeof globalThis.fetch;
-  /** The Worker's ctx.waitUntil: the Langfuse export runs after the response. Without it llm() awaits the export. */
+  /** The Worker's ctx.waitUntil: the Langfuse export and the visitor_hits prune run after the response.
+   *  Without it llm() awaits them. */
   waitUntil?: (promise: Promise<unknown>) => void;
+  /** Test seam for the 1% visitor_hits prune draw (default Math.random). */
+  random?: () => number;
 }
 
 const MAX_OUTPUT_TOKENS = 800;
@@ -113,12 +116,17 @@ export function dailyCap(env: Env): number {
 
 /**
  * Every LLM call in a Project goes through here (AD-7):
- * 1. per-visitor rate limit, 2. per-Project daily counter in Neon,
+ * 1. per-visitor rate limit: the Workers Rate Limiting binding, then the Neon visitor_hits limiter
+ *    (the binding did not enforce on Workers Free, 2026-10-20; both fail open),
+ * 2. per-Project daily counter in Neon (fails closed),
  * 3. Workers AI, 4. Groq, 5. OpenRouter, 6. demo mode from demo_cache.
  * It never bills: with no card on any vendor, a limit can only error, and errors fall through.
  */
 export async function llm(prompt: string, ctx: LlmContext): Promise<LlmResult> {
   if (!(await visitorAllowed(ctx.env, ctx.visitor))) return { kind: "limited" };
+  if (!(await neonVisitorAllowed(ctx.env, ctx.store, ctx.visitor, { random: ctx.random, waitUntil: ctx.waitUntil }))) {
+    return { kind: "limited" };
+  }
 
   const attempts: Attempt[] = [];
   const day = (ctx.now ?? new Date()).toISOString().slice(0, 10);

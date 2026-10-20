@@ -23,6 +23,12 @@ regex = '''sk-or-v1-[a-f0-9]{48,}'''
 keywords = ["sk-or-v1-"]
 
 [[rules]]
+id = "langfuse-secret-key"
+description = "Langfuse secret key"
+regex = '''sk-lf-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'''
+keywords = ["sk-lf-"]
+
+[[rules]]
 id = "claude-oauth-token"
 description = "Claude Code OAuth token"
 regex = '''sk-ant-oat01-[A-Za-z0-9_\-]{20,}'''

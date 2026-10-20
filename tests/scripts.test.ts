@@ -249,3 +249,41 @@ describe("Neon provisioning", () => {
     expect(body.project).toMatchObject({ name: "acme-ai-demo", org_id: "org-1", region_id: "aws-us-east-2" });
   });
 });
+
+describe("eval-score (story 3.17)", async () => {
+  const { passRate, postScore, scoreBody } = await import("../scripts/eval-score.mjs");
+  const OUT = { results: { stats: { successes: 3, failures: 1, errors: 0 } } };
+  const KEYS = { LANGFUSE_PUBLIC_KEY: "pk-lf-t", LANGFUSE_SECRET_KEY: "sk-lf-t", LANGFUSE_HOST: "https://lf.example.test", PROJECT_REPO: "Escobar-Luis/acme-ai-triage", SHA: "a1b2c3d4e5f6a7b8" };
+
+  it("pass rate from promptfoo's output stats", () => {
+    expect(passRate(OUT)).toMatchObject({ rate: 0.75, total: 4 });
+    expect(passRate({})).toBeNull();
+    expect(passRate({ results: { stats: { successes: 0, failures: 0, errors: 0 } } })).toBeNull();
+  });
+
+  it("no keys: no request", async () => {
+    const fetch = vi.fn();
+    expect(await postScore(passRate(OUT), {}, fetch)).toContain("no Langfuse keys");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("keys: one score on the project:<repo> session", async () => {
+    const fetch = vi.fn(async () => new Response("{}", { status: 202 }));
+    expect(await postScore(passRate(OUT), KEYS, fetch)).toBe("score posted (HTTP 202)");
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://lf.example.test/api/public/scores");
+    const body = JSON.parse(String(init.body));
+    expect(body).toEqual(scoreBody(passRate(OUT), KEYS));
+    expect(body[0]).toMatchObject({ name: "promptfoo", value: 0.75, dataType: "NUMERIC", sessionId: "project:Escobar-Luis/acme-ai-triage" });
+    expect(String(init.body)).not.toContain("sk-lf-t");
+  });
+
+  it("a 5xx is retried once, a 4xx is not", async () => {
+    const five = vi.fn(async () => new Response("{}", { status: 503 }));
+    expect(await postScore(passRate(OUT), KEYS, five)).toBe("score not posted: HTTP 503");
+    expect(five).toHaveBeenCalledTimes(2);
+    const four = vi.fn(async () => new Response("{}", { status: 401 }));
+    await postScore(passRate(OUT), KEYS, four);
+    expect(four).toHaveBeenCalledTimes(1);
+  });
+});

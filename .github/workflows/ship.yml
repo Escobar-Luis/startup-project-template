@@ -3,7 +3,9 @@
 # publish: fresh runner the agent never touched. Refuses changes to protected paths, rebases on main,
 #          runs tests, build and gitleaks, then pushes.
 # deploy:  GitHub Environment "deploy" holds CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, NEON_API_KEY
-#          (+ optional NEON_ORG_ID, GROQ_API_KEY, OPENROUTER_API_KEY). The build agent never sees them.
+#          (+ optional NEON_ORG_ID, GROQ_API_KEY, OPENROUTER_API_KEY, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY,
+#          LANGFUSE_HOST). The build agent never sees them. With the Langfuse keys, llm() traces each call
+#          (src/worker/trace.ts) and the promptfoo pass rate is posted as a score (scripts/eval-score.mjs).
 name: ship
 
 on:
@@ -245,6 +247,11 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run build:worker
+      - name: promptfoo config check (the live eval runs after deploy)
+        env:
+          PROMPTFOO_DISABLE_TELEMETRY: "1"
+          PROMPTFOO_DISABLE_UPDATE: "1"
+        run: npx promptfoo validate -c evals/promptfooconfig.yaml
 
       - name: gitleaks (before any push)
         run: |
@@ -465,6 +472,9 @@ jobs:
           NAMES: ${{ steps.existing.outputs.names }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
         run: |
           # Secrets ship with the Worker version itself (wrangler deploy --secrets-file), so the Worker never
           # runs without them. Source: `wrangler deploy --help` (4.151.2): "--secrets-file  Path to a file
@@ -478,7 +488,7 @@ jobs:
             const app = process.env.RUNNER_TEMP + "/neon-app-url";
             if (fs.existsSync(app)) out.DATABASE_URL = fs.readFileSync(app, "utf8").trim();
             if (!names.has("VISITOR_PEPPER")) out.VISITOR_PEPPER = crypto.randomBytes(32).toString("hex");
-            for (const k of ["GROQ_API_KEY", "OPENROUTER_API_KEY"]) if (process.env[k]) out[k] = process.env[k];
+            for (const k of ["GROQ_API_KEY", "OPENROUTER_API_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"]) if (process.env[k]) out[k] = process.env[k];
             for (const v of Object.values(out)) console.log("::add-mask::" + v);
             if (!out.DATABASE_URL && !names.has("DATABASE_URL")) { console.log("::error::no DATABASE_URL to give the Worker"); process.exit(1); }
             fs.writeFileSync(process.env.RUNNER_TEMP + "/worker-secrets.json", JSON.stringify(out), { mode: 0o600 });
@@ -492,7 +502,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4.151.2"
-          command: deploy --name ${{ github.event.repository.name }} --var GIT_SHA:${{ env.DEPLOY_SHA }} --secrets-file ${{ runner.temp }}/worker-secrets.json
+          command: deploy --name ${{ github.event.repository.name }} --var GIT_SHA:${{ env.DEPLOY_SHA }} --var PROJECT_REPO:${{ github.repository }} --secrets-file ${{ runner.temp }}/worker-secrets.json
 
       - name: Remove secret files
         if: always()
@@ -510,6 +520,23 @@ jobs:
           done
           echo "::error::$LIVE_URL/health did not report db:true (last: ${body:-no answer})"
           exit 1
+
+      - name: Evals (promptfoo on evals/, pass rate to Langfuse)
+        # Informs, never blocks: the Quality Gate decides. One eval case costs one llm() call on the live Worker.
+        continue-on-error: true
+        env:
+          LIVE_URL: ${{ steps.wrangler.outputs.deployment-url }}
+          PROJECT_REPO: ${{ github.repository }}
+          SHA: ${{ env.DEPLOY_SHA }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+          PROMPTFOO_DISABLE_TELEMETRY: "1"
+          PROMPTFOO_DISABLE_SHARING: "1"
+          PROMPTFOO_DISABLE_UPDATE: "1"
+        run: |
+          npx promptfoo eval -c evals/promptfooconfig.yaml --no-progress-bar --no-cache --output "$RUNNER_TEMP/eval.json" || echo "promptfoo exit $? (failed cases are scored, not fatal)"
+          node scripts/eval-score.mjs "$RUNNER_TEMP/eval.json" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Write deployed.json and publish Pages
         env:

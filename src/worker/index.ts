@@ -53,11 +53,19 @@ export function createApp(deps: AppDeps = {}) {
     if (!parsed.success) return c.json({ error: "send {prompt: string} of 1-2000 characters" }, 400);
     const store = getStore(c.env);
     const visitor = await visitorKey(c.req.raw, c.env.VISITOR_PEPPER);
+    let waitUntil: ((p: Promise<unknown>) => void) | undefined;
+    try {
+      const ec = c.executionCtx;
+      waitUntil = (p) => ec.waitUntil(p);
+    } catch {
+      waitUntil = undefined; // no execution context outside the Workers runtime (tests): llm() awaits the export
+    }
     const result = await llm(parsed.data.prompt, {
       env: c.env,
       store,
       visitor,
       providers: deps.providers?.(c.env),
+      waitUntil,
     });
     if (result.kind === "limited") return c.json({ error: "slow down" }, 429);
     if (store) {

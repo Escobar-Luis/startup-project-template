@@ -6,6 +6,7 @@ import recordedRuns from "../../demo/runs.json";
 import type { DemoRow, Store } from "./db";
 import type { Env } from "./env";
 import { visitorAllowed } from "./ratelimit";
+import { sendGenerations, type Generation } from "./trace";
 
 export const DEMO_BANNER = "Live AI quota reached, showing a recorded run";
 
@@ -53,8 +54,10 @@ export interface LlmContext {
   now?: Date;
   /** Fallback recorded runs when demo_cache cannot be read (default: bundled demo/runs.json). */
   demoRuns?: DemoRow[];
-  /** Test seam for HTTP providers (Groq, OpenRouter). */
+  /** Test seam for HTTP providers (Groq, OpenRouter) and the Langfuse export. */
   fetch?: typeof globalThis.fetch;
+  /** The Worker's ctx.waitUntil: the Langfuse export runs after the response. Without it llm() awaits the export. */
+  waitUntil?: (promise: Promise<unknown>) => void;
 }
 
 const MAX_OUTPUT_TOKENS = 800;
@@ -124,16 +127,31 @@ export async function llm(prompt: string, ctx: LlmContext): Promise<LlmResult> {
   if (!reserved) return demoAnswer(prompt, ctx.store, attempts, ctx.demoRuns);
 
   const providers = ctx.providers ?? defaultProviders(ctx.env, ctx.fetch);
+  const generations: Generation[] = [];
   for (const provider of providers) {
     if (!provider.available) continue;
+    const startedAt = new Date();
     try {
       const text = await provider.generate(prompt, ctx.system);
+      generations.push({ provider: provider.name, model: provider.model, ok: true, input: prompt, output: text, startedAt, endedAt: new Date() });
+      await trace(ctx, generations);
       return { kind: "answer", text, source: provider.name, model: provider.model, attempts };
     } catch (error) {
-      attempts.push({ provider: provider.name, error: describeError(error) });
+      const message = describeError(error);
+      attempts.push({ provider: provider.name, error: message });
+      generations.push({ provider: provider.name, model: provider.model, ok: false, error: message, input: prompt, startedAt, endedAt: new Date() });
     }
   }
+  await trace(ctx, generations);
   return demoAnswer(prompt, ctx.store, attempts, ctx.demoRuns);
+}
+
+/** One Langfuse generation per attempt (story 3.17); a no-op without Langfuse keys, never throws. */
+async function trace(ctx: LlmContext, generations: Generation[]): Promise<void> {
+  if (generations.length === 0) return;
+  const sending = sendGenerations(ctx.env, generations, ctx.fetch).catch(() => false);
+  if (ctx.waitUntil) ctx.waitUntil(sending);
+  else await sending;
 }
 
 export async function loadDemoRows(store: Store | null, bundled: DemoRow[] = recordedRuns as DemoRow[]): Promise<DemoRow[]> {

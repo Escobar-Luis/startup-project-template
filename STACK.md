@@ -25,8 +25,8 @@ Swapping a layer in a Project needs a `stack_note` in that Project's README sayi
 | Groq provider | @ai-sdk/groq | 4.0.65 | npm (2026-10-19) |
 | OpenRouter provider | @openrouter/ai-sdk-provider | 3.1.0 | research note winston-research-ai-tech, npm (2026-10-19) |
 | Validation | Zod | 4.6.7 | npm (2026-10-19) |
-| Evals (CI only) | promptfoo, `npm run eval` against the live URL | 0.124.1 | npm (2026-10-19) |
-| Tracing | Langfuse Cloud Hobby, `@langfuse/tracing` (v6 too new per AD-17 rule 6) | server v4.64.0, SDK 5.14.0 | langfuse.com/pricing, npm (2026-10-19) |
+| Evals (CI only) | promptfoo on `evals/` against the live URL after each deploy; the pass rate goes to Langfuse as score `promptfoo` (`scripts/eval-score.mjs`) | 0.124.1 | npm (2026-10-19) |
+| Tracing | Langfuse Cloud Hobby. `llm()` sends one generation per provider attempt, tagged `project:<repo>`, as OTLP JSON over `fetch` (`src/worker/trace.ts`); a no-op without `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`. `@langfuse/tracing` stays pinned but is not imported (v6 too new per AD-17 rule 6); the legacy `/api/public/ingestion` is sunset 2026-11-16 | server v4.64.0, SDK 5.14.0 | langfuse.com/pricing, npm (2026-10-19); langfuse.com/docs/api-and-data-platform/features/public-api (2026-10-20) |
 | Build agent | anthropics/claude-code-action | v1 (1.0.253) | GitHub release (2026-10-19) |
 | Secret scan | gitleaks | 8.30.1 | GitHub release (2026-10-19) |
 | Tests | vitest | 5.0.5 | npm (2026-10-19) |

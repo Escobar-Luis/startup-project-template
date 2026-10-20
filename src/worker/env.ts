@@ -14,4 +14,10 @@ export interface Env {
   VISITOR_PEPPER?: string;
   DAILY_LLM_CAP?: string;
   GIT_SHA?: string;
+  /** owner/repo, set by the deploy job (`--var PROJECT_REPO`): Langfuse tags each LLM call `project:<repo>`. */
+  PROJECT_REPO?: string;
+  /** Optional: with both keys, llm() sends one Langfuse generation per provider attempt (src/worker/trace.ts). */
+  LANGFUSE_PUBLIC_KEY?: string;
+  LANGFUSE_SECRET_KEY?: string;
+  LANGFUSE_HOST?: string;
 }

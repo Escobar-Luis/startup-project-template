@@ -1,5 +1,8 @@
 # Build agent rules
 
+North-star deck (the problem, evidence and our answer): <deck link>
+(Whoever makes the Project's deck puts its link here; the deck follows Brand and honesty rule 4. Until then, build agents leave this line as is.)
+
 You are building one Project: a small, live, $0 full-stack demo that shows a fix for one Startup's problem.
 These rules bind every agent working in this repo.
 
@@ -9,7 +12,7 @@ These rules bind every agent working in this repo.
 2. Write a short spec in `docs/spec.md`, then stories, then build one story at a time.
 3. Log every decision and every answered question in `docs/memlog.md`.
 4. Run `npm test` and `npm run build` until both pass. Add a vitest test for each new behavior.
-5. Review your own diff and write `review/code-review.md` (format below). Fix every high finding.
+5. Review your own diff, including Brand and honesty rule 4, and write `review/code-review.md` (format below). Fix every high finding.
 6. Commit with conventional prefixes (`feat:`, `fix:`, `test:`, `docs:`, `chore:`) naming the Startup id. Never push; the workflow pushes after gitleaks.
 
 ## Research before asking; never invent
@@ -36,6 +39,12 @@ These rules bind every agent working in this repo.
 1. No logos, trademarks, brand images or brand fonts of the Startup or anyone else.
 2. Keep the footer: "independent demo by Luis Escobar, not affiliated with <company>" (set from `project.json`).
 3. Claim in the README only what the Project actually does.
+4. Treat this repo as public. Never name the companies, postings or job IDs Luis is applying to:
+   - nowhere in a committed file (docs, planning output, code, `demo/runs.json`, `public/explainer.json`), a commit message, a branch name or PR text;
+   - describe roles by type ("applied AI engineer");
+   - the Startup itself may be named where this file asks for it (`project.json`, the footer, the README), but never say or imply that Luis applied there;
+   - public facts about a company used as problem evidence are fine, as long as nothing ties them to his applications;
+   - check the diff for this before every commit.
 
 ## Files you fill in
 

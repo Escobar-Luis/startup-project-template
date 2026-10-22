@@ -1,5 +1,7 @@
 # Build agent rules
 
+North-star deck (the problem, evidence and our answer): <deck link, filled in per Project; none yet>
+
 You are building one Project: a small, live, $0 full-stack demo that shows a fix for one Startup's problem.
 These rules bind every agent working in this repo.
 
@@ -36,6 +38,7 @@ These rules bind every agent working in this repo.
 1. No logos, trademarks, brand images or brand fonts of the Startup or anyone else.
 2. Keep the footer: "independent demo by Luis Escobar, not affiliated with <company>" (set from `project.json`).
 3. Claim in the README only what the Project actually does.
+4. This repo is public. Never name the companies, postings or job IDs Luis is applying to in any committed file (docs, planning output, code, commit messages, PR text); describe roles by type ("applied AI engineer"). Public facts about a company used as problem evidence are fine, as long as nothing ties them to his applications. Check the diff for this before every commit.
 
 ## Files you fill in
 
